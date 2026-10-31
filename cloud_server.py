@@ -17,6 +17,9 @@ from pypdf import PdfReader
 SOURCE = "https://www.antiguamet.com/Daily_FCast.html"
 MARINE_STATUS = "https://www.antiguamet.com/Marine.html"
 
+METEO_FRANCE_RADAR = "https://meteofrance.gp/fr/images-radar"
+METEO_FRANCE_RADAR_50KM = "https://meteofrance.gp/fr/images-radar/50km"
+
 MARINE_BULLETINS = {
     "High Surf Advisory":
         "https://www.antiguamet.com/Antigua_Met_files/HighSurfADVISORY.pdf",
@@ -49,9 +52,7 @@ WEEKDAYS = {
 def fetch(url):
     request = Request(
         url,
-        headers={
-            "User-Agent": "SeaPoint/0.1",
-        },
+        headers={"User-Agent": "SeaPoint/0.1"},
     )
 
     with urlopen(
@@ -119,7 +120,9 @@ def get_current_marine_links():
                     href,
                 )
 
-    return found or dict(MARINE_BULLETINS)
+    return found or dict(
+        MARINE_BULLETINS
+    )
 
 
 def parse_issue_datetime(text):
@@ -189,14 +192,11 @@ def bulletin_applies_to_antigua(
             :end_match.start()
         ]
 
-    return (
-        re.search(
-            r"\bAntigua\b",
-            after_issue,
-            re.IGNORECASE,
-        )
-        is not None
-    )
+    return re.search(
+        r"\bAntigua\b",
+        after_issue,
+        re.IGNORECASE,
+    ) is not None
 
 
 def parse_descriptor(
@@ -208,7 +208,6 @@ def parse_descriptor(
     )
 
     lower = descriptor.lower()
-
     target_date = None
 
     full_date = re.search(
@@ -218,7 +217,9 @@ def parse_descriptor(
     )
 
     if full_date:
-        day, month, year = full_date.groups()
+        day, month, year = (
+            full_date.groups()
+        )
 
         for date_format in (
             "%d %B %Y",
@@ -244,7 +245,9 @@ def parse_descriptor(
 
         if weekday_match:
             weekday = WEEKDAYS[
-                weekday_match.group(1).lower()
+                weekday_match
+                .group(1)
+                .lower()
             ]
 
             days_ahead = (
@@ -275,7 +278,9 @@ def parse_descriptor(
                 "this afternoon",
             )
         ):
-            target_date = issue_datetime.date()
+            target_date = (
+                issue_datetime.date()
+            )
 
         else:
             return None
@@ -297,7 +302,9 @@ def parse_descriptor(
         )
 
         meridiem = (
-            explicit_time.group(3).lower()
+            explicit_time
+            .group(3)
+            .lower()
         )
 
         if (
@@ -371,7 +378,8 @@ def get_timing_window(
     timing_match = re.search(
         r"Timing:\s*(.*?)(?=Synopsis:)",
         text,
-        re.IGNORECASE | re.DOTALL,
+        re.IGNORECASE
+        | re.DOTALL,
     )
 
     if not timing_match:
@@ -397,7 +405,9 @@ def get_timing_window(
         if until_index < 0:
             return None, None
 
-        descriptor_end = antigua_index
+        descriptor_end = (
+            antigua_index
+        )
 
         for_index = lower.find(
             " for ",
@@ -406,12 +416,17 @@ def get_timing_window(
         )
 
         if for_index >= 0:
-            descriptor_end = for_index
+            descriptor_end = (
+                for_index
+            )
 
-        expiry_descriptor = timing_text[
-            until_index + len("until"):
-            descriptor_end
-        ]
+        expiry_descriptor = (
+            timing_text[
+                until_index
+                + len("until"):
+                descriptor_end
+            ]
+        )
 
         from_index = lower.rfind(
             "from",
@@ -427,11 +442,17 @@ def get_timing_window(
                 until_index
             ]
 
-            if " for " not in between:
-                start_descriptor = timing_text[
-                    from_index + len("from"):
-                    until_index
-                ]
+            if (
+                " for "
+                not in between
+            ):
+                start_descriptor = (
+                    timing_text[
+                        from_index
+                        + len("from"):
+                        until_index
+                    ]
+                )
 
     else:
         if (
@@ -449,7 +470,9 @@ def get_timing_window(
         if not until_match:
             return None, None
 
-        expiry_descriptor = until_match.group(1)
+        expiry_descriptor = (
+            until_match.group(1)
+        )
 
         from_match = re.search(
             r"\bfrom\s+(.+?)\s+until\b",
@@ -490,10 +513,11 @@ def check_alert(item):
             )
         )
 
-        issue_datetime, issue_match = (
-            parse_issue_datetime(
-                text
-            )
+        (
+            issue_datetime,
+            issue_match,
+        ) = parse_issue_datetime(
+            text
         )
 
         if issue_datetime is None:
@@ -523,7 +547,10 @@ def check_alert(item):
                 },
             )
 
-        start, expiry = get_timing_window(
+        (
+            start,
+            expiry,
+        ) = get_timing_window(
             text,
             issue_datetime,
             applies,
@@ -586,8 +613,7 @@ def check_alert(item):
             name,
             {
                 "active": True,
-                "reason":
-                    "active",
+                "reason": "active",
                 "starts":
                     start.isoformat(),
                 "expires":
@@ -622,9 +648,23 @@ def radar_page(
         location_name
     )
 
+    meteo_france_url_js = (
+        json.dumps(
+            METEO_FRANCE_RADAR
+        )
+    )
+
+    meteo_france_50_url_js = (
+        json.dumps(
+            METEO_FRANCE_RADAR_50KM
+        )
+    )
+
     return f"""<!DOCTYPE html>
 <html>
+
 <head>
+
 <meta charset="utf-8">
 
 <meta
@@ -632,7 +672,9 @@ def radar_page(
     content="width=device-width, initial-scale=1.0"
 >
 
-<title>SeaPoint Rain Radar</title>
+<title>
+SeaPoint Rain Radar
+</title>
 
 <link
     rel="stylesheet"
@@ -640,77 +682,589 @@ def radar_page(
 >
 
 <style>
-html, body {{
-    height: 100%;
-    margin: 0;
-    font-family: Arial, sans-serif;
-    background: #eef5f8;
+
+* {{
+    box-sizing: border-box;
 }}
 
-#map {{
+html,
+body {{
     height: 100%;
+    margin: 0;
+    font-family:
+        Arial,
+        sans-serif;
+    background:
+        #eef5f8;
+}}
+
+body {{
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}}
+
+.topbar {{
+    position: relative;
+    z-index: 1000;
+    background:
+        rgba(
+            255,
+            255,
+            255,
+            0.97
+        );
+    padding:
+        10px 12px;
+    box-shadow:
+        0 1px 6px
+        rgba(
+            0,
+            0,
+            0,
+            0.14
+        );
+}}
+
+.title-row {{
+    display: flex;
+    align-items: center;
+    justify-content:
+        space-between;
+    gap: 10px;
 }}
 
 .title {{
-    position: absolute;
-    top: 12px;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 1000;
-    background: rgba(255, 255, 255, 0.94);
-    padding: 10px 16px;
-    border-radius: 10px;
-    font-weight: bold;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
-    white-space: nowrap;
+    font-size: 17px;
+    font-weight: 700;
+    color: #123c50;
 }}
+
+.live-badge {{
+    border-radius: 999px;
+    background: #e6f4f8;
+    color: #087d9d;
+    padding: 5px 9px;
+    font-size: 12px;
+    font-weight: 700;
+}}
+
+.legend-wrap {{
+    margin-top: 8px;
+}}
+
+.legend-labels {{
+    display: flex;
+    justify-content:
+        space-between;
+    font-size: 11px;
+    color: #5d6f78;
+    margin-bottom: 3px;
+}}
+
+.legend-bar {{
+    height: 8px;
+    border-radius: 999px;
+
+    background:
+        linear-gradient(
+            90deg,
+            #68d8ff 0%,
+            #2ca25f 32%,
+            #ffe066 58%,
+            #ff922b 76%,
+            #d6336c 100%
+        );
+}}
+
+.map-wrap {{
+    position: relative;
+    flex: 1 1 auto;
+    min-height: 280px;
+}}
+
+#map {{
+    width: 100%;
+    height: 100%;
+}}
+
+.bottom-panel {{
+    position: relative;
+    z-index: 1000;
+
+    background:
+        rgba(
+            255,
+            255,
+            255,
+            0.98
+        );
+
+    padding:
+        10px 12px 12px;
+
+    box-shadow:
+        0 -1px 6px
+        rgba(
+            0,
+            0,
+            0,
+            0.14
+        );
+}}
+
+.time-row {{
+    display: flex;
+    align-items: center;
+    justify-content:
+        space-between;
+    gap: 12px;
+}}
+
+.now-label {{
+    font-weight: 700;
+    color: #123c50;
+}}
+
+#currentTime {{
+    color: #5d6f78;
+    font-size: 13px;
+    text-align: right;
+}}
+
+.timeline-wrap {{
+    position: relative;
+}}
+
+.timeline-line {{
+    position: absolute;
+    left: 12.5%;
+    right: 12.5%;
+    top: 6px;
+
+    height: 2px;
+
+    background:
+        #d4e0e5;
+}}
+
+.timeline {{
+    margin-top: 8px;
+
+    display: grid;
+
+    grid-template-columns:
+        repeat(
+            4,
+            1fr
+        );
+
+    align-items: center;
+
+    gap: 4px;
+
+    font-size: 11px;
+
+    color:
+        #6a7c85;
+}}
+
+.timeline .tick {{
+    position: relative;
+    text-align: center;
+    padding-top: 12px;
+}}
+
+.timeline .tick::before {{
+    content: "";
+
+    position: absolute;
+
+    top: 3px;
+    left: 50%;
+
+    width: 7px;
+    height: 7px;
+
+    border-radius: 50%;
+
+    transform:
+        translateX(
+            -50%
+        );
+
+    background:
+        #a9bcc5;
+}}
+
+.timeline .tick.now::before {{
+    background:
+        #087d9d;
+
+    width: 10px;
+    height: 10px;
+
+    top: 1px;
+}}
+
+.actions {{
+    display: grid;
+
+    grid-template-columns:
+        1fr 1fr;
+
+    gap: 8px;
+
+    margin-top: 10px;
+}}
+
+.action {{
+    border: 0;
+
+    border-radius: 10px;
+
+    min-height: 44px;
+
+    padding:
+        9px 10px;
+
+    cursor: pointer;
+
+    font-size: 13px;
+
+    font-weight: 700;
+}}
+
+.primary {{
+    background:
+        #087d9d;
+
+    color: white;
+}}
+
+.secondary {{
+    background:
+        #eaf2f5;
+
+    color:
+        #123c50;
+}}
+
+.note {{
+    margin-top: 8px;
+
+    color:
+        #70818a;
+
+    font-size: 11px;
+
+    line-height: 1.35;
+}}
+
+@media (
+    max-width: 520px
+) {{
+
+    .actions {{
+        grid-template-columns:
+            1fr;
+    }}
+
+    .title {{
+        font-size:
+            15px;
+    }}
+}}
+
 </style>
+
 </head>
 
 <body>
 
-<div class="title">
-Rain Radar — {safe_name_html}
+<div class="topbar">
+
+    <div class="title-row">
+
+        <div class="title">
+            Rain Radar —
+            {safe_name_html}
+        </div>
+
+        <div class="live-badge">
+            NOW
+        </div>
+
+    </div>
+
+    <div class="legend-wrap">
+
+        <div class="legend-labels">
+
+            <span>
+                Light rain
+            </span>
+
+            <span>
+                Moderate
+            </span>
+
+            <span>
+                Heavy rain
+            </span>
+
+        </div>
+
+        <div class="legend-bar">
+        </div>
+
+    </div>
+
 </div>
 
-<div id="map"></div>
+
+<div class="map-wrap">
+
+    <div id="map">
+    </div>
+
+</div>
+
+
+<div class="bottom-panel">
+
+    <div class="time-row">
+
+        <div class="now-label">
+            Current precipitation
+        </div>
+
+        <div id="currentTime">
+            Loading time…
+        </div>
+
+    </div>
+
+
+    <div class="timeline-wrap">
+
+        <div class="timeline-line">
+        </div>
+
+        <div class="timeline">
+
+            <div class="tick">
+                -3 hr
+            </div>
+
+            <div class="tick">
+                -2 hr
+            </div>
+
+            <div class="tick">
+                -1 hr
+            </div>
+
+            <div class="tick now">
+                Now
+            </div>
+
+        </div>
+
+    </div>
+
+
+    <div class="actions">
+
+        <button
+            class="action primary"
+            id="openMeteoFrance"
+            type="button"
+        >
+            ▶ Play 3-hour Météo-France radar
+        </button>
+
+        <button
+            class="action secondary"
+            id="openMeteoFrance50"
+            type="button"
+        >
+            50 km Guadeloupe detail
+        </button>
+
+    </div>
+
+
+    <div class="note">
+
+        SeaPoint currently shows
+        the live OpenWeather
+        precipitation layer.
+
+        Use the official
+        Météo-France Guadeloupe
+        radar for the animated
+        three-hour sequence.
+
+    </div>
+
+</div>
+
 
 <script
-    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js">
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+>
 </script>
 
+
 <script>
-const map = L.map('map').setView(
-    [{latitude}, {longitude}],
-    10
-);
+
+const locationName =
+    {safe_name_js};
+
+
+const map =
+    L.map(
+        'map',
+        {{
+            zoomControl:
+                true
+        }}
+    )
+    .setView(
+        [
+            {latitude},
+            {longitude}
+        ],
+        9
+    );
+
 
 L.tileLayer(
     'https://tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png',
     {{
-        maxZoom: 18,
-        attribution: '&copy; OpenStreetMap contributors'
+        maxZoom:
+            18,
+
+        attribution:
+            '&copy; OpenStreetMap contributors'
     }}
-).addTo(map);
+)
+.addTo(
+    map
+);
+
 
 L.tileLayer(
     '/radar-tile/{{z}}/{{x}}/{{y}}.png',
     {{
-        opacity: 0.70,
-        attribution: '&copy; OpenWeather'
+        opacity:
+            0.72,
+
+        attribution:
+            '&copy; OpenWeather'
     }}
-).addTo(map);
+)
+.addTo(
+    map
+);
+
 
 L.marker(
-    [{latitude}, {longitude}]
+    [
+        {latitude},
+        {longitude}
+    ]
 )
-.addTo(map)
+.addTo(
+    map
+)
 .bindPopup(
-    {safe_name_js}
+    locationName
 );
+
+
+function updateClock() {{
+
+    const formatter =
+        new Intl.DateTimeFormat(
+            'en-US',
+            {{
+                timeZone:
+                    'America/Antigua',
+
+                weekday:
+                    'short',
+
+                hour:
+                    'numeric',
+
+                minute:
+                    '2-digit'
+            }}
+        );
+
+
+    document
+        .getElementById(
+            'currentTime'
+        )
+        .textContent =
+            formatter.format(
+                new Date()
+            )
+            + ' Antigua time';
+}}
+
+
+updateClock();
+
+
+setInterval(
+    updateClock,
+    30000
+);
+
+
+document
+    .getElementById(
+        'openMeteoFrance'
+    )
+    .addEventListener(
+        'click',
+        () => {{
+
+            window.open(
+                {meteo_france_url_js},
+                '_blank',
+                'noopener'
+            );
+
+        }}
+    );
+
+
+document
+    .getElementById(
+        'openMeteoFrance50'
+    )
+    .addEventListener(
+        'click',
+        () => {{
+
+            window.open(
+                {meteo_france_50_url_js},
+                '_blank',
+                'noopener'
+            );
+
+        }}
+    );
+
 </script>
 
 </body>
+
 </html>
 """
 
@@ -729,10 +1283,13 @@ def fetch_radar_tile(
         "https://tile.openweathermap.org/"
         f"map/precipitation_new/"
         f"{z}/{x}/{y}.png"
-        f"?appid={quote(OPENWEATHER_API_KEY)}"
+        f"?appid="
+        f"{quote(OPENWEATHER_API_KEY)}"
     )
 
-    return fetch(url)
+    return fetch(
+        url
+    )
 
 
 class Handler(
@@ -840,19 +1397,32 @@ class Handler(
                 )
 
                 active_alerts = []
+
                 checked = {}
 
-                with ThreadPoolExecutor(
-                    max_workers=4
-                ) as executor:
-                    for name, result in executor.map(
+                with (
+                    ThreadPoolExecutor(
+                        max_workers=4
+                    )
+                    as executor
+                ):
+                    for (
+                        name,
+                        result,
+                    ) in executor.map(
                         check_alert,
                         current_links.items(),
                     ):
-                        checked[name] = result
+                        checked[name] = (
+                            result
+                        )
 
-                        if result["active"]:
-                            active_alerts.append(name)
+                        if result[
+                            "active"
+                        ]:
+                            active_alerts.append(
+                                name
+                            )
 
                 self.send_json({
                     "alerts":
@@ -864,7 +1434,8 @@ class Handler(
             except Exception as error:
                 self.send_json(
                     {
-                        "alerts": [],
+                        "alerts":
+                            [],
                         "error":
                             str(error),
                     },
@@ -889,17 +1460,22 @@ class Handler(
                     )[0]
                 )
 
-                location_name = query.get(
-                    "name",
-                    ["Antigua"],
-                )[0]
+                location_name = (
+                    query.get(
+                        "name",
+                        ["Antigua"],
+                    )[0]
+                )
 
-                content = radar_page(
-                    latitude,
-                    longitude,
-                    location_name,
-                ).encode(
-                    "utf-8"
+                content = (
+                    radar_page(
+                        latitude,
+                        longitude,
+                        location_name,
+                    )
+                    .encode(
+                        "utf-8"
+                    )
                 )
 
                 self.send_response(
@@ -955,10 +1531,15 @@ class Handler(
                     parts[2]
                 )
 
-                y_text = parts[3]
+                y_text = (
+                    parts[3]
+                )
 
-                if not y_text.endswith(
-                    ".png"
+                if not (
+                    y_text
+                    .endswith(
+                        ".png"
+                    )
                 ):
                     self.send_error(
                         404
@@ -967,15 +1548,18 @@ class Handler(
                     return
 
                 y = int(
-                    y_text.removesuffix(
+                    y_text
+                    .removesuffix(
                         ".png"
                     )
                 )
 
-                content = fetch_radar_tile(
-                    z,
-                    x,
-                    y,
+                content = (
+                    fetch_radar_tile(
+                        z,
+                        x,
+                        y,
+                    )
                 )
 
                 self.send_response(
@@ -1014,14 +1598,20 @@ class Handler(
         if path.startswith(
             "/marine-alert/"
         ):
-            alert_name = unquote(
-                path.removeprefix(
-                    "/marine-alert/"
+            alert_name = (
+                unquote(
+                    path
+                    .removeprefix(
+                        "/marine-alert/"
+                    )
                 )
             )
 
-            url = MARINE_BULLETINS.get(
-                alert_name
+            url = (
+                MARINE_BULLETINS
+                .get(
+                    alert_name
+                )
             )
 
             if url is None:
@@ -1032,8 +1622,10 @@ class Handler(
                 return
 
             try:
-                content = fetch(
-                    url
+                content = (
+                    fetch(
+                        url
+                    )
                 )
 
                 self.send_response(
@@ -1066,8 +1658,10 @@ class Handler(
 
         if path == "/bulletin":
             try:
-                content = fetch(
-                    SOURCE
+                content = (
+                    fetch(
+                        SOURCE
+                    )
                 )
 
                 self.send_response(
