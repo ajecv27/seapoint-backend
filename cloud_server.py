@@ -16,9 +16,7 @@ from pypdf import PdfReader
 
 SOURCE = "https://www.antiguamet.com/Daily_FCast.html"
 MARINE_STATUS = "https://www.antiguamet.com/Marine.html"
-
-METEO_FRANCE_RADAR = "https://meteofrance.gp/fr/images-radar"
-METEO_FRANCE_RADAR_50KM = "https://meteofrance.gp/fr/images-radar/50km"
+RAINVIEWER_API = "https://api.rainviewer.com/public/weather-maps.json"
 
 MARINE_BULLETINS = {
     "High Surf Advisory":
@@ -245,9 +243,7 @@ def parse_descriptor(
 
         if weekday_match:
             weekday = WEEKDAYS[
-                weekday_match
-                .group(1)
-                .lower()
+                weekday_match.group(1).lower()
             ]
 
             days_ahead = (
@@ -405,9 +401,7 @@ def get_timing_window(
         if until_index < 0:
             return None, None
 
-        descriptor_end = (
-            antigua_index
-        )
+        descriptor_end = antigua_index
 
         for_index = lower.find(
             " for ",
@@ -416,9 +410,7 @@ def get_timing_window(
         )
 
         if for_index >= 0:
-            descriptor_end = (
-                for_index
-            )
+            descriptor_end = for_index
 
         expiry_descriptor = (
             timing_text[
@@ -442,10 +434,7 @@ def get_timing_window(
                 until_index
             ]
 
-            if (
-                " for "
-                not in between
-            ):
+            if " for " not in between:
                 start_descriptor = (
                     timing_text[
                         from_index
@@ -635,6 +624,36 @@ def check_alert(item):
         )
 
 
+def get_rainviewer_frames():
+    data = json.loads(
+        fetch(
+            RAINVIEWER_API
+        ).decode(
+            "utf-8"
+        )
+    )
+
+    radar = (
+        data.get("radar")
+        or {}
+    )
+
+    frames = (
+        radar.get("past")
+        or []
+    )
+
+    return {
+        "host":
+            data.get(
+                "host",
+                "https://tilecache.rainviewer.com",
+            ),
+        "frames":
+            frames,
+    }
+
+
 def radar_page(
     latitude,
     longitude,
@@ -648,15 +667,9 @@ def radar_page(
         location_name
     )
 
-    meteo_france_url_js = (
-        json.dumps(
-            METEO_FRANCE_RADAR
-        )
-    )
-
-    meteo_france_50_url_js = (
-        json.dumps(
-            METEO_FRANCE_RADAR_50KM
+    openweather_available = json.dumps(
+        bool(
+            OPENWEATHER_API_KEY
         )
     )
 
@@ -689,11 +702,14 @@ SeaPoint Rain Radar
 
 html,
 body {{
+    width: 100%;
     height: 100%;
     margin: 0;
+
     font-family:
         Arial,
         sans-serif;
+
     background:
         #eef5f8;
 }}
@@ -705,8 +721,8 @@ body {{
 }}
 
 .topbar {{
-    position: relative;
     z-index: 1000;
+
     background:
         rgba(
             255,
@@ -714,8 +730,10 @@ body {{
             255,
             0.97
         );
+
     padding:
         10px 12px;
+
     box-shadow:
         0 1px 6px
         rgba(
@@ -731,6 +749,7 @@ body {{
     align-items: center;
     justify-content:
         space-between;
+
     gap: 10px;
 }}
 
@@ -742,29 +761,51 @@ body {{
 
 .live-badge {{
     border-radius: 999px;
-    background: #e6f4f8;
-    color: #087d9d;
-    padding: 5px 9px;
-    font-size: 12px;
-    font-weight: 700;
+
+    background:
+        #e6f4f8;
+
+    color:
+        #087d9d;
+
+    padding:
+        5px 9px;
+
+    font-size:
+        12px;
+
+    font-weight:
+        700;
 }}
 
 .legend-wrap {{
-    margin-top: 8px;
+    margin-top:
+        8px;
 }}
 
 .legend-labels {{
-    display: flex;
+    display:
+        flex;
+
     justify-content:
         space-between;
-    font-size: 11px;
-    color: #5d6f78;
-    margin-bottom: 3px;
+
+    font-size:
+        11px;
+
+    color:
+        #5d6f78;
+
+    margin-bottom:
+        3px;
 }}
 
 .legend-bar {{
-    height: 8px;
-    border-radius: 999px;
+    height:
+        8px;
+
+    border-radius:
+        999px;
 
     background:
         linear-gradient(
@@ -778,19 +819,73 @@ body {{
 }}
 
 .map-wrap {{
-    position: relative;
-    flex: 1 1 auto;
-    min-height: 280px;
+    position:
+        relative;
+
+    flex:
+        1 1 auto;
+
+    min-height:
+        280px;
 }}
 
 #map {{
-    width: 100%;
-    height: 100%;
+    width:
+        100%;
+
+    height:
+        100%;
+}}
+
+.loading {{
+    position:
+        absolute;
+
+    z-index:
+        800;
+
+    left:
+        50%;
+
+    top:
+        16px;
+
+    transform:
+        translateX(-50%);
+
+    background:
+        rgba(
+            255,
+            255,
+            255,
+            0.95
+        );
+
+    border-radius:
+        999px;
+
+    padding:
+        7px 12px;
+
+    font-size:
+        12px;
+
+    color:
+        #123c50;
+
+    box-shadow:
+        0 1px 5px
+        rgba(
+            0,
+            0,
+            0,
+            0.15
+        );
 }}
 
 .bottom-panel {{
-    position: relative;
-    z-index: 1000;
+    z-index:
+        1000;
 
     background:
         rgba(
@@ -813,162 +908,127 @@ body {{
         );
 }}
 
-.time-row {{
-    display: flex;
-    align-items: center;
-    justify-content:
-        space-between;
-    gap: 12px;
+.control-row {{
+    display:
+        flex;
+
+    align-items:
+        center;
+
+    gap:
+        10px;
 }}
 
-.now-label {{
-    font-weight: 700;
-    color: #123c50;
-}}
+.play-button {{
+    width:
+        46px;
 
-#currentTime {{
-    color: #5d6f78;
-    font-size: 13px;
-    text-align: right;
-}}
+    height:
+        46px;
 
-.timeline-wrap {{
-    position: relative;
-}}
+    flex:
+        0 0 46px;
 
-.timeline-line {{
-    position: absolute;
-    left: 12.5%;
-    right: 12.5%;
-    top: 6px;
+    border:
+        0;
 
-    height: 2px;
+    border-radius:
+        50%;
 
     background:
-        #d4e0e5;
-}}
-
-.timeline {{
-    margin-top: 8px;
-
-    display: grid;
-
-    grid-template-columns:
-        repeat(
-            4,
-            1fr
-        );
-
-    align-items: center;
-
-    gap: 4px;
-
-    font-size: 11px;
+        #087d9d;
 
     color:
-        #6a7c85;
+        white;
+
+    font-size:
+        18px;
+
+    cursor:
+        pointer;
 }}
 
-.timeline .tick {{
-    position: relative;
-    text-align: center;
-    padding-top: 12px;
+.time-block {{
+    min-width:
+        0;
+
+    flex:
+        1;
 }}
 
-.timeline .tick::before {{
-    content: "";
-
-    position: absolute;
-
-    top: 3px;
-    left: 50%;
-
-    width: 7px;
-    height: 7px;
-
-    border-radius: 50%;
-
-    transform:
-        translateX(
-            -50%
-        );
-
-    background:
-        #a9bcc5;
-}}
-
-.timeline .tick.now::before {{
-    background:
-        #087d9d;
-
-    width: 10px;
-    height: 10px;
-
-    top: 1px;
-}}
-
-.actions {{
-    display: grid;
-
-    grid-template-columns:
-        1fr 1fr;
-
-    gap: 8px;
-
-    margin-top: 10px;
-}}
-
-.action {{
-    border: 0;
-
-    border-radius: 10px;
-
-    min-height: 44px;
-
-    padding:
-        9px 10px;
-
-    cursor: pointer;
-
-    font-size: 13px;
-
-    font-weight: 700;
-}}
-
-.primary {{
-    background:
-        #087d9d;
-
-    color: white;
-}}
-
-.secondary {{
-    background:
-        #eaf2f5;
+.frame-time {{
+    font-weight:
+        700;
 
     color:
         #123c50;
+
+    font-size:
+        14px;
 }}
 
-.note {{
-    margin-top: 8px;
+.frame-status {{
+    margin-top:
+        2px;
 
     color:
-        #70818a;
+        #6a7c85;
 
-    font-size: 11px;
+    font-size:
+        11px;
+}}
 
-    line-height: 1.35;
+#timeline {{
+    width:
+        100%;
+
+    margin-top:
+        9px;
+
+    accent-color:
+        #087d9d;
+}}
+
+.timeline-labels {{
+    display:
+        flex;
+
+    justify-content:
+        space-between;
+
+    color:
+        #6a7c85;
+
+    font-size:
+        10px;
+
+    margin-top:
+        -1px;
+}}
+
+.source {{
+    margin-top:
+        7px;
+
+    color:
+        #71828a;
+
+    font-size:
+        10px;
+
+    line-height:
+        1.3;
+}}
+
+.source a {{
+    color:
+        #087d9d;
 }}
 
 @media (
-    max-width: 520px
+    max-width:
+        520px
 ) {{
-
-    .actions {{
-        grid-template-columns:
-            1fr;
-    }}
 
     .title {{
         font-size:
@@ -980,7 +1040,9 @@ body {{
 
 </head>
 
+
 <body>
+
 
 <div class="topbar">
 
@@ -991,11 +1053,15 @@ body {{
             {safe_name_html}
         </div>
 
-        <div class="live-badge">
-            NOW
+        <div
+            class="live-badge"
+            id="nowBadge"
+        >
+            RADAR
         </div>
 
     </div>
+
 
     <div class="legend-wrap">
 
@@ -1028,83 +1094,89 @@ body {{
     <div id="map">
     </div>
 
+    <div
+        class="loading"
+        id="loadingMessage"
+    >
+        Loading radar frames…
+    </div>
+
 </div>
 
 
 <div class="bottom-panel">
 
-    <div class="time-row">
-
-        <div class="now-label">
-            Current precipitation
-        </div>
-
-        <div id="currentTime">
-            Loading time…
-        </div>
-
-    </div>
-
-
-    <div class="timeline-wrap">
-
-        <div class="timeline-line">
-        </div>
-
-        <div class="timeline">
-
-            <div class="tick">
-                -3 hr
-            </div>
-
-            <div class="tick">
-                -2 hr
-            </div>
-
-            <div class="tick">
-                -1 hr
-            </div>
-
-            <div class="tick now">
-                Now
-            </div>
-
-        </div>
-
-    </div>
-
-
-    <div class="actions">
+    <div class="control-row">
 
         <button
-            class="action primary"
-            id="openMeteoFrance"
+            id="playPause"
+            class="play-button"
             type="button"
+            aria-label="Pause radar animation"
         >
-            ▶ Play 3-hour Météo-France radar
+            ❚❚
         </button>
 
-        <button
-            class="action secondary"
-            id="openMeteoFrance50"
-            type="button"
-        >
-            50 km Guadeloupe detail
-        </button>
+
+        <div class="time-block">
+
+            <div
+                id="frameTime"
+                class="frame-time"
+            >
+                Loading…
+            </div>
+
+            <div
+                id="frameStatus"
+                class="frame-status"
+            >
+                Preparing radar animation
+            </div>
+
+        </div>
 
     </div>
 
 
-    <div class="note">
+    <input
+        id="timeline"
+        type="range"
+        min="0"
+        max="0"
+        value="0"
+        step="1"
+        aria-label="Radar timeline"
+    >
 
-        SeaPoint currently shows
-        the live OpenWeather
-        precipitation layer.
 
-        Use the official
-        Météo-France Guadeloupe
-        radar for the animated
-        three-hour sequence.
+    <div class="timeline-labels">
+
+        <span>
+            Past
+        </span>
+
+        <span>
+            Now
+        </span>
+
+    </div>
+
+
+    <div class="source">
+
+        Development radar:
+        <a
+            href="https://www.rainviewer.com/"
+            target="_blank"
+            rel="noopener"
+        >
+            RainViewer
+        </a>.
+
+        Production source will be
+        replaced before commercial
+        release.
 
     </div>
 
@@ -1136,7 +1208,7 @@ const map =
             {latitude},
             {longitude}
         ],
-        9
+        7
     );
 
 
@@ -1148,21 +1220,6 @@ L.tileLayer(
 
         attribution:
             '&copy; OpenStreetMap contributors'
-    }}
-)
-.addTo(
-    map
-);
-
-
-L.tileLayer(
-    '/radar-tile/{{z}}/{{x}}/{{y}}.png',
-    {{
-        opacity:
-            0.72,
-
-        attribution:
-            '&copy; OpenWeather'
     }}
 )
 .addTo(
@@ -1184,84 +1241,435 @@ L.marker(
 );
 
 
-function updateClock() {{
+let frames = [];
+let radarHost = '';
+let radarLayer = null;
+let frameIndex = 0;
+let playing = true;
+let timer = null;
 
-    const formatter =
-        new Intl.DateTimeFormat(
-            'en-US',
-            {{
-                timeZone:
-                    'America/Antigua',
 
-                weekday:
-                    'short',
+const playPause =
+    document.getElementById(
+        'playPause'
+    );
 
-                hour:
-                    'numeric',
 
-                minute:
-                    '2-digit'
-            }}
+const timeline =
+    document.getElementById(
+        'timeline'
+    );
+
+
+const frameTime =
+    document.getElementById(
+        'frameTime'
+    );
+
+
+const frameStatus =
+    document.getElementById(
+        'frameStatus'
+    );
+
+
+const loadingMessage =
+    document.getElementById(
+        'loadingMessage'
+    );
+
+
+const nowBadge =
+    document.getElementById(
+        'nowBadge'
+    );
+
+
+function formatAntiguaTime(
+    unixSeconds
+) {{
+
+    const date =
+        new Date(
+            unixSeconds * 1000
         );
 
 
-    document
-        .getElementById(
-            'currentTime'
-        )
-        .textContent =
-            formatter.format(
-                new Date()
-            )
-            + ' Antigua time';
+    return new Intl.DateTimeFormat(
+        'en-US',
+        {{
+            timeZone:
+                'America/Antigua',
+
+            weekday:
+                'short',
+
+            month:
+                'short',
+
+            day:
+                'numeric',
+
+            hour:
+                'numeric',
+
+            minute:
+                '2-digit'
+        }}
+    )
+    .format(
+        date
+    );
 }}
 
 
-updateClock();
+function tileUrlForFrame(
+    frame
+) {{
+
+    return (
+        radarHost
+        + frame.path
+        + '/256/{{z}}/{{x}}/{{y}}/2/1_1.png'
+    );
+}}
 
 
-setInterval(
-    updateClock,
-    30000
+function showFrame(
+    index
+) {{
+
+    if (
+        !frames.length
+        || index < 0
+        || index >= frames.length
+    ) {{
+        return;
+    }}
+
+
+    frameIndex =
+        index;
+
+
+    const frame =
+        frames[
+            frameIndex
+        ];
+
+
+    if (
+        radarLayer
+    ) {{
+        map.removeLayer(
+            radarLayer
+        );
+    }}
+
+
+    radarLayer =
+        L.tileLayer(
+            tileUrlForFrame(
+                frame
+            ),
+            {{
+                opacity:
+                    0.72,
+
+                maxNativeZoom:
+                    7,
+
+                maxZoom:
+                    18,
+
+                attribution:
+                    'Radar: RainViewer'
+            }}
+        )
+        .addTo(
+            map
+        );
+
+
+    timeline.value =
+        String(
+            frameIndex
+        );
+
+
+    frameTime.textContent =
+        formatAntiguaTime(
+            frame.time
+        )
+        + ' Antigua time';
+
+
+    if (
+        frameIndex
+        === frames.length - 1
+    ) {{
+
+        frameStatus.textContent =
+            'Latest available radar frame';
+
+
+        nowBadge.textContent =
+            'NOW';
+
+    }}
+    else {{
+
+        frameStatus.textContent =
+            'Past radar frame';
+
+
+        nowBadge.textContent =
+            'PAST';
+
+    }}
+}}
+
+
+function stopTimer() {{
+
+    if (
+        timer
+    ) {{
+        clearInterval(
+            timer
+        );
+
+        timer =
+            null;
+    }}
+}}
+
+
+function startPlayback() {{
+
+    stopTimer();
+
+
+    playing =
+        true;
+
+
+    playPause.textContent =
+        '❚❚';
+
+
+    playPause.setAttribute(
+        'aria-label',
+        'Pause radar animation'
+    );
+
+
+    timer =
+        setInterval(
+            () => {{
+
+                if (
+                    !frames.length
+                ) {{
+                    return;
+                }}
+
+
+                let nextIndex =
+                    frameIndex + 1;
+
+
+                if (
+                    nextIndex
+                    >= frames.length
+                ) {{
+                    nextIndex =
+                        0;
+                }}
+
+
+                showFrame(
+                    nextIndex
+                );
+
+            }},
+            700
+        );
+}}
+
+
+function pausePlayback() {{
+
+    stopTimer();
+
+
+    playing =
+        false;
+
+
+    playPause.textContent =
+        '▶';
+
+
+    playPause.setAttribute(
+        'aria-label',
+        'Play radar animation'
+    );
+}}
+
+
+playPause.addEventListener(
+    'click',
+    () => {{
+
+        if (
+            playing
+        ) {{
+            pausePlayback();
+        }}
+        else {{
+            startPlayback();
+        }}
+
+    }}
 );
 
 
-document
-    .getElementById(
-        'openMeteoFrance'
-    )
-    .addEventListener(
-        'click',
-        () => {{
+timeline.addEventListener(
+    'input',
+    () => {{
 
-            window.open(
-                {meteo_france_url_js},
-                '_blank',
-                'noopener'
+        pausePlayback();
+
+
+        showFrame(
+            Number(
+                timeline.value
+            )
+        );
+
+    }}
+);
+
+
+async function loadRadarFrames() {{
+
+    try {{
+
+        const response =
+            await fetch(
+                '/radar-frames',
+                {{
+                    cache:
+                        'no-store'
+                }}
             );
 
+
+        if (
+            !response.ok
+        ) {{
+            throw new Error(
+                'Radar frames unavailable'
+            );
         }}
-    );
 
 
-document
-    .getElementById(
-        'openMeteoFrance50'
-    )
-    .addEventListener(
-        'click',
-        () => {{
+        const data =
+            await response.json();
 
-            window.open(
-                {meteo_france_50_url_js},
-                '_blank',
-                'noopener'
+
+        radarHost =
+            data.host
+            || '';
+
+
+        frames =
+            data.frames
+            || [];
+
+
+        if (
+            !frames.length
+        ) {{
+            throw new Error(
+                'No radar frames returned'
+            );
+        }}
+
+
+        timeline.max =
+            String(
+                frames.length - 1
             );
 
+
+        frameIndex =
+            0;
+
+
+        showFrame(
+            frameIndex
+        );
+
+
+        loadingMessage.style.display =
+            'none';
+
+
+        startPlayback();
+
+    }}
+    catch (
+        error
+    ) {{
+
+        loadingMessage.textContent =
+            'Animated radar unavailable — showing current precipitation';
+
+
+        frameStatus.textContent =
+            'Animated radar temporarily unavailable';
+
+
+        if (
+            {openweather_available}
+        ) {{
+
+            radarLayer =
+                L.tileLayer(
+                    '/radar-tile/{{z}}/{{x}}/{{y}}.png',
+                    {{
+                        opacity:
+                            0.72,
+
+                        maxZoom:
+                            18,
+
+                        attribution:
+                            '&copy; OpenWeather'
+                    }}
+                )
+                .addTo(
+                    map
+                );
         }}
-    );
+
+
+        playPause.disabled =
+            true;
+
+
+        timeline.disabled =
+            true;
+    }}
+}}
+
+
+loadRadarFrames();
 
 </script>
+
 
 </body>
 
@@ -1377,6 +1785,7 @@ class Handler(
             parsed.query
         )
 
+
         if path in (
             "/",
             "/health",
@@ -1384,11 +1793,13 @@ class Handler(
             self.send_json({
                 "status":
                     "ok",
+
                 "service":
                     "SeaPoint Alerts",
             })
 
             return
+
 
         if path == "/alerts":
             try:
@@ -1413,9 +1824,9 @@ class Handler(
                         check_alert,
                         current_links.items(),
                     ):
-                        checked[name] = (
-                            result
-                        )
+                        checked[
+                            name
+                        ] = result
 
                         if result[
                             "active"
@@ -1424,18 +1835,22 @@ class Handler(
                                 name
                             )
 
+
                 self.send_json({
                     "alerts":
                         active_alerts,
+
                     "checked":
                         checked,
                 })
+
 
             except Exception as error:
                 self.send_json(
                     {
                         "alerts":
                             [],
+
                         "error":
                             str(error),
                     },
@@ -1443,6 +1858,31 @@ class Handler(
                 )
 
             return
+
+
+        if path == "/radar-frames":
+            try:
+                self.send_json(
+                    get_rainviewer_frames()
+                )
+
+            except Exception as error:
+                self.send_json(
+                    {
+                        "host":
+                            "",
+
+                        "frames":
+                            [],
+
+                        "error":
+                            str(error),
+                    },
+                    502,
+                )
+
+            return
+
 
         if path == "/radar":
             try:
@@ -1467,6 +1907,7 @@ class Handler(
                     )[0]
                 )
 
+
                 content = (
                     radar_page(
                         latitude,
@@ -1477,6 +1918,7 @@ class Handler(
                         "utf-8"
                     )
                 )
+
 
                 self.send_response(
                     200
@@ -1495,6 +1937,7 @@ class Handler(
                     content
                 )
 
+
             except Exception as error:
                 self.send_json(
                     {
@@ -1505,6 +1948,7 @@ class Handler(
                 )
 
             return
+
 
         if path.startswith(
             "/radar-tile/"
@@ -1523,6 +1967,7 @@ class Handler(
 
                     return
 
+
                 z = int(
                     parts[1]
                 )
@@ -1534,6 +1979,7 @@ class Handler(
                 y_text = (
                     parts[3]
                 )
+
 
                 if not (
                     y_text
@@ -1547,12 +1993,14 @@ class Handler(
 
                     return
 
+
                 y = int(
                     y_text
                     .removesuffix(
                         ".png"
                     )
                 )
+
 
                 content = (
                     fetch_radar_tile(
@@ -1561,6 +2009,7 @@ class Handler(
                         y,
                     )
                 )
+
 
                 self.send_response(
                     200
@@ -1584,6 +2033,7 @@ class Handler(
                     content
                 )
 
+
             except Exception as error:
                 self.send_json(
                     {
@@ -1594,6 +2044,7 @@ class Handler(
                 )
 
             return
+
 
         if path.startswith(
             "/marine-alert/"
@@ -1621,12 +2072,14 @@ class Handler(
 
                 return
 
+
             try:
                 content = (
                     fetch(
                         url
                     )
                 )
+
 
                 self.send_response(
                     200
@@ -1645,6 +2098,7 @@ class Handler(
                     content
                 )
 
+
             except Exception as error:
                 self.send_json(
                     {
@@ -1656,6 +2110,7 @@ class Handler(
 
             return
 
+
         if path == "/bulletin":
             try:
                 content = (
@@ -1663,6 +2118,7 @@ class Handler(
                         SOURCE
                     )
                 )
+
 
                 self.send_response(
                     200
@@ -1681,6 +2137,7 @@ class Handler(
                     content
                 )
 
+
             except Exception as error:
                 self.send_json(
                     {
@@ -1691,6 +2148,7 @@ class Handler(
                 )
 
             return
+
 
         self.send_error(
             404
@@ -1704,9 +2162,11 @@ PORT = int(
     )
 )
 
+
 print(
     f"SeaPoint backend running on port {PORT}"
 )
+
 
 ThreadingHTTPServer(
     (
