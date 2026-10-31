@@ -15,19 +15,15 @@ from pypdf import PdfReader
 
 
 SOURCE = "https://www.antiguamet.com/Daily_FCast.html"
-
 MARINE_STATUS = "https://www.antiguamet.com/Marine.html"
 
 MARINE_BULLETINS = {
     "High Surf Advisory":
         "https://www.antiguamet.com/Antigua_Met_files/HighSurfADVISORY.pdf",
-
     "High Surf Warning":
         "https://www.antiguamet.com/Antigua_Met_files/HighSurfWARNING.pdf",
-
     "Small Craft Advisory":
         "https://www.antiguamet.com/Antigua_Met_files/SmallCraftADVISORY.pdf",
-
     "Small Craft Warning":
         "https://www.antiguamet.com/Antigua_Met_files/SmallCraftWARNING.pdf",
 }
@@ -37,9 +33,7 @@ OPENWEATHER_API_KEY = os.environ.get(
     "",
 ).strip()
 
-ANTIGUA_TIME = ZoneInfo(
-    "America/Antigua"
-)
+ANTIGUA_TIME = ZoneInfo("America/Antigua")
 
 WEEKDAYS = {
     "monday": 0,
@@ -56,8 +50,7 @@ def fetch(url):
     request = Request(
         url,
         headers={
-            "User-Agent":
-                "SeaPoint/0.1",
+            "User-Agent": "SeaPoint/0.1",
         },
     )
 
@@ -84,14 +77,10 @@ def pdf_to_text(data):
     parts = []
 
     for page in reader.pages:
-        page_text = (
-            page.extract_text()
-        )
+        page_text = page.extract_text()
 
         if page_text:
-            parts.append(
-                page_text
-            )
+            parts.append(page_text)
 
     return "\n".join(parts)
 
@@ -107,17 +96,12 @@ def get_current_marine_links():
     anchors = re.findall(
         r'<a[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
         page,
-        re.IGNORECASE
-        | re.DOTALL,
+        re.IGNORECASE | re.DOTALL,
     )
 
     found = {}
 
-    for (
-        href,
-        label_html,
-    ) in anchors:
-
+    for href, label_html in anchors:
         label = normalize_text(
             unescape(
                 re.sub(
@@ -128,31 +112,17 @@ def get_current_marine_links():
             )
         )
 
-        for name in (
-            MARINE_BULLETINS
-        ):
-            if (
-                name.lower()
-                in label.lower()
-            ):
-                found[name] = (
-                    urljoin(
-                        MARINE_STATUS,
-                        href,
-                    )
+        for name in MARINE_BULLETINS:
+            if name.lower() in label.lower():
+                found[name] = urljoin(
+                    MARINE_STATUS,
+                    href,
                 )
 
-    return (
-        found
-        or dict(
-            MARINE_BULLETINS
-        )
-    )
+    return found or dict(MARINE_BULLETINS)
 
 
-def parse_issue_datetime(
-    text,
-):
+def parse_issue_datetime(text):
     pattern = re.compile(
         r"(\d{1,2}:\d{2}\s*(?:am|pm))\s+"
         r"(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\s+"
@@ -162,9 +132,7 @@ def parse_issue_datetime(
         re.IGNORECASE,
     )
 
-    match = pattern.search(
-        text
-    )
+    match = pattern.search(text)
 
     if not match:
         return None, None
@@ -181,17 +149,14 @@ def parse_issue_datetime(
         "%I:%M %p %d %b %Y",
     ):
         try:
-            result = (
-                datetime.strptime(
-                    value,
-                    date_format,
-                )
+            result = datetime.strptime(
+                value,
+                date_format,
             )
 
             return (
                 result.replace(
-                    tzinfo=
-                        ANTIGUA_TIME,
+                    tzinfo=ANTIGUA_TIME,
                 ),
                 match,
             )
@@ -220,11 +185,9 @@ def bulletin_applies_to_antigua(
     )
 
     if end_match:
-        after_issue = (
-            after_issue[
-                :end_match.start()
-            ]
-        )
+        after_issue = after_issue[
+            :end_match.start()
+        ]
 
     return (
         re.search(
@@ -240,15 +203,11 @@ def parse_descriptor(
     descriptor,
     issue_datetime,
 ):
-    descriptor = (
-        normalize_text(
-            descriptor
-        )
+    descriptor = normalize_text(
+        descriptor
     )
 
-    lower = (
-        descriptor.lower()
-    )
+    lower = descriptor.lower()
 
     target_date = None
 
@@ -259,23 +218,17 @@ def parse_descriptor(
     )
 
     if full_date:
-        (
-            day,
-            month,
-            year,
-        ) = full_date.groups()
+        day, month, year = full_date.groups()
 
         for date_format in (
             "%d %B %Y",
             "%d %b %Y",
         ):
             try:
-                target_date = (
-                    datetime.strptime(
-                        f"{day} {month} {year}",
-                        date_format,
-                    ).date()
-                )
+                target_date = datetime.strptime(
+                    f"{day} {month} {year}",
+                    date_format,
+                ).date()
 
                 break
 
@@ -283,47 +236,34 @@ def parse_descriptor(
                 pass
 
     if target_date is None:
-        weekday_match = (
-            re.search(
-                r"\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b",
-                descriptor,
-                re.IGNORECASE,
-            )
+        weekday_match = re.search(
+            r"\b(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b",
+            descriptor,
+            re.IGNORECASE,
         )
 
         if weekday_match:
             weekday = WEEKDAYS[
-                weekday_match
-                .group(1)
-                .lower()
+                weekday_match.group(1).lower()
             ]
 
             days_ahead = (
                 weekday
-                - issue_datetime
-                .weekday()
+                - issue_datetime.weekday()
             ) % 7
 
             target_date = (
-                issue_datetime
-                .date()
+                issue_datetime.date()
                 + timedelta(
-                    days=
-                        days_ahead,
+                    days=days_ahead,
                 )
             )
 
     if target_date is None:
-        if (
-            "tomorrow"
-            in lower
-        ):
+        if "tomorrow" in lower:
             target_date = (
-                issue_datetime
-                .date()
-                + timedelta(
-                    days=1
-                )
+                issue_datetime.date()
+                + timedelta(days=1)
             )
 
         elif any(
@@ -335,38 +275,29 @@ def parse_descriptor(
                 "this afternoon",
             )
         ):
-            target_date = (
-                issue_datetime
-                .date()
-            )
+            target_date = issue_datetime.date()
 
         else:
             return None
 
-    explicit_time = (
-        re.search(
-            r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b",
-            descriptor,
-            re.IGNORECASE,
-        )
+    explicit_time = re.search(
+        r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b",
+        descriptor,
+        re.IGNORECASE,
     )
 
     if explicit_time:
         hour = int(
-            explicit_time
-            .group(1)
+            explicit_time.group(1)
         )
 
         minute = int(
-            explicit_time
-            .group(2)
+            explicit_time.group(2)
             or 0
         )
 
         meridiem = (
-            explicit_time
-            .group(3)
-            .lower()
+            explicit_time.group(3).lower()
         )
 
         if (
@@ -386,10 +317,7 @@ def parse_descriptor(
             minute,
         )
 
-    elif (
-        "mid-morning"
-        in lower
-    ):
+    elif "mid-morning" in lower:
         target_time = time(
             10,
             0,
@@ -410,19 +338,13 @@ def parse_descriptor(
             0,
         )
 
-    elif (
-        "afternoon"
-        in lower
-    ):
+    elif "afternoon" in lower:
         target_time = time(
             18,
             0,
         )
 
-    elif (
-        "evening"
-        in lower
-    ):
+    elif "evening" in lower:
         target_time = time(
             21,
             0,
@@ -446,85 +368,58 @@ def get_timing_window(
     issue_datetime,
     applies_to_antigua,
 ):
-    timing_match = (
-        re.search(
-            r"Timing:\s*(.*?)(?=Synopsis:)",
-            text,
-            re.IGNORECASE
-            | re.DOTALL,
-        )
+    timing_match = re.search(
+        r"Timing:\s*(.*?)(?=Synopsis:)",
+        text,
+        re.IGNORECASE | re.DOTALL,
     )
 
     if not timing_match:
         return None, None
 
-    timing_text = (
-        normalize_text(
-            timing_match
-            .group(1)
-        )
+    timing_text = normalize_text(
+        timing_match.group(1)
     )
 
-    lower = (
-        timing_text.lower()
+    lower = timing_text.lower()
+
+    antigua_index = lower.find(
+        "antigua"
     )
 
-    antigua_index = (
-        lower.find(
-            "antigua"
-        )
-    )
-
-    if (
-        antigua_index >= 0
-    ):
-        until_index = (
-            lower.rfind(
-                "until",
-                0,
-                antigua_index,
-            )
+    if antigua_index >= 0:
+        until_index = lower.rfind(
+            "until",
+            0,
+            antigua_index,
         )
 
         if until_index < 0:
             return None, None
 
-        descriptor_end = (
-            antigua_index
-        )
+        descriptor_end = antigua_index
 
-        for_index = (
-            lower.find(
-                " for ",
-                until_index,
-                antigua_index,
-            )
+        for_index = lower.find(
+            " for ",
+            until_index,
+            antigua_index,
         )
 
         if for_index >= 0:
-            descriptor_end = (
-                for_index
-            )
+            descriptor_end = for_index
 
-        expiry_descriptor = (
-            timing_text[
-                until_index
-                + len("until"):
-                descriptor_end
-            ]
+        expiry_descriptor = timing_text[
+            until_index + len("until"):
+            descriptor_end
+        ]
+
+        from_index = lower.rfind(
+            "from",
+            0,
+            until_index,
         )
 
-        from_index = (
-            lower.rfind(
-                "from",
-                0,
-                until_index,
-            )
-        )
-
-        start_descriptor = (
-            None
-        )
+        start_descriptor = None
 
         if from_index >= 0:
             between = lower[
@@ -532,17 +427,11 @@ def get_timing_window(
                 until_index
             ]
 
-            if (
-                " for "
-                not in between
-            ):
-                start_descriptor = (
-                    timing_text[
-                        from_index
-                        + len("from"):
-                        until_index
-                    ]
-                )
+            if " for " not in between:
+                start_descriptor = timing_text[
+                    from_index + len("from"):
+                    until_index
+                ]
 
     else:
         if (
@@ -560,16 +449,12 @@ def get_timing_window(
         if not until_match:
             return None, None
 
-        expiry_descriptor = (
-            until_match.group(1)
-        )
+        expiry_descriptor = until_match.group(1)
 
-        from_match = (
-            re.search(
-                r"\bfrom\s+(.+?)\s+until\b",
-                timing_text,
-                re.IGNORECASE,
-            )
+        from_match = re.search(
+            r"\bfrom\s+(.+?)\s+until\b",
+            timing_text,
+            re.IGNORECASE,
         )
 
         start_descriptor = (
@@ -605,17 +490,13 @@ def check_alert(item):
             )
         )
 
-        (
-            issue_datetime,
-            issue_match,
-        ) = parse_issue_datetime(
-            text
+        issue_datetime, issue_match = (
+            parse_issue_datetime(
+                text
+            )
         )
 
-        if (
-            issue_datetime
-            is None
-        ):
+        if issue_datetime is None:
             return (
                 name,
                 {
@@ -642,10 +523,7 @@ def check_alert(item):
                 },
             )
 
-        (
-            start,
-            expiry,
-        ) = get_timing_window(
+        start, expiry = get_timing_window(
             text,
             issue_datetime,
             applies,
@@ -686,11 +564,9 @@ def check_alert(item):
                     "reason":
                         "not_started",
                     "starts":
-                        start
-                        .isoformat(),
+                        start.isoformat(),
                     "expires":
-                        expiry
-                        .isoformat(),
+                        expiry.isoformat(),
                 },
             )
 
@@ -702,8 +578,7 @@ def check_alert(item):
                     "reason":
                         "expired",
                     "expires":
-                        expiry
-                        .isoformat(),
+                        expiry.isoformat(),
                 },
             )
 
@@ -714,11 +589,9 @@ def check_alert(item):
                 "reason":
                     "active",
                 "starts":
-                    start
-                    .isoformat(),
+                    start.isoformat(),
                 "expires":
-                    expiry
-                    .isoformat(),
+                    expiry.isoformat(),
                 "url": url,
             },
         )
@@ -752,7 +625,6 @@ def radar_page(
     return f"""<!DOCTYPE html>
 <html>
 <head>
-
 <meta charset="utf-8">
 
 <meta
@@ -760,9 +632,7 @@ def radar_page(
     content="width=device-width, initial-scale=1.0"
 >
 
-<title>
-SeaPoint Rain Radar
-</title>
+<title>SeaPoint Rain Radar</title>
 
 <link
     rel="stylesheet"
@@ -770,15 +640,11 @@ SeaPoint Rain Radar
 >
 
 <style>
-
 html, body {{
     height: 100%;
     margin: 0;
-    font-family:
-        Arial,
-        sans-serif;
-    background:
-        #eef5f8;
+    font-family: Arial, sans-serif;
+    background: #eef5f8;
 }}
 
 #map {{
@@ -786,40 +652,19 @@ html, body {{
 }}
 
 .title {{
-    position:
-        absolute;
+    position: absolute;
     top: 12px;
     left: 50%;
-    transform:
-        translateX(-50%);
+    transform: translateX(-50%);
     z-index: 1000;
-    background:
-        rgba(
-            255,
-            255,
-            255,
-            0.94
-        );
-    padding:
-        10px 16px;
-    border-radius:
-        10px;
-    font-weight:
-        bold;
-    box-shadow:
-        0 2px 8px
-        rgba(
-            0,
-            0,
-            0,
-            0.18
-        );
-    white-space:
-        nowrap;
+    background: rgba(255, 255, 255, 0.94);
+    padding: 10px 16px;
+    border-radius: 10px;
+    font-weight: bold;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+    white-space: nowrap;
 }}
-
 </style>
-
 </head>
 
 <body>
@@ -835,48 +680,34 @@ Rain Radar — {safe_name_html}
 </script>
 
 <script>
-
-const map =
-    L.map('map')
-    .setView(
-        [
-            {latitude},
-            {longitude}
-        ],
-        10
-    );
+const map = L.map('map').setView(
+    [{latitude}, {longitude}],
+    10
+);
 
 L.tileLayer(
     'https://tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png',
     {{
-        maxZoom:
-            18,
-        attribution:
-            '&copy; OpenStreetMap contributors'
+        maxZoom: 18,
+        attribution: '&copy; OpenStreetMap contributors'
     }}
 ).addTo(map);
 
 L.tileLayer(
     '/radar-tile/{{z}}/{{x}}/{{y}}.png',
     {{
-        opacity:
-            0.70,
-        attribution:
-            '&copy; OpenWeather'
+        opacity: 0.70,
+        attribution: '&copy; OpenWeather'
     }}
 ).addTo(map);
 
 L.marker(
-    [
-        {latitude},
-        {longitude}
-    ]
+    [{latitude}, {longitude}]
 )
 .addTo(map)
 .bindPopup(
     {safe_name_js}
 );
-
 </script>
 
 </body>
@@ -898,8 +729,7 @@ def fetch_radar_tile(
         "https://tile.openweathermap.org/"
         f"map/precipitation_new/"
         f"{z}/{x}/{y}.png"
-        f"?appid="
-        f"{quote(OPENWEATHER_API_KEY)}"
+        f"?appid={quote(OPENWEATHER_API_KEY)}"
     )
 
     return fetch(url)
@@ -1010,34 +840,19 @@ class Handler(
                 )
 
                 active_alerts = []
-
                 checked = {}
 
-                with (
-                    ThreadPoolExecutor(
-                        max_workers=4
-                    )
-                    as executor
-                ):
-                    for (
-                        name,
-                        result,
-                    ) in executor.map(
+                with ThreadPoolExecutor(
+                    max_workers=4
+                ) as executor:
+                    for name, result in executor.map(
                         check_alert,
-                        current_links
-                        .items(),
+                        current_links.items(),
                     ):
-                        checked[
-                            name
-                        ] = result
+                        checked[name] = result
 
-                        if result[
-                            "active"
-                        ]:
-                            active_alerts
-                            .append(
-                                name
-                            )
+                        if result["active"]:
+                            active_alerts.append(name)
 
                 self.send_json({
                     "alerts":
@@ -1049,8 +864,7 @@ class Handler(
             except Exception as error:
                 self.send_json(
                     {
-                        "alerts":
-                            [],
+                        "alerts": [],
                         "error":
                             str(error),
                     },
@@ -1075,22 +889,17 @@ class Handler(
                     )[0]
                 )
 
-                location_name = (
-                    query.get(
-                        "name",
-                        ["Antigua"],
-                    )[0]
-                )
+                location_name = query.get(
+                    "name",
+                    ["Antigua"],
+                )[0]
 
-                content = (
-                    radar_page(
-                        latitude,
-                        longitude,
-                        location_name,
-                    )
-                    .encode(
-                        "utf-8"
-                    )
+                content = radar_page(
+                    latitude,
+                    longitude,
+                    location_name,
+                ).encode(
+                    "utf-8"
                 )
 
                 self.send_response(
@@ -1131,13 +940,11 @@ class Handler(
                     .split("/")
                 )
 
-                if (
-                    len(parts)
-                    != 4
-                ):
+                if len(parts) != 4:
                     self.send_error(
                         404
                     )
+
                     return
 
                 z = int(
@@ -1148,34 +955,27 @@ class Handler(
                     parts[2]
                 )
 
-                y_text = (
-                    parts[3]
-                )
+                y_text = parts[3]
 
-                if not (
-                    y_text
-                    .endswith(
-                        ".png"
-                    )
+                if not y_text.endswith(
+                    ".png"
                 ):
                     self.send_error(
                         404
                     )
+
                     return
 
                 y = int(
-                    y_text
-                    .removesuffix(
+                    y_text.removesuffix(
                         ".png"
                     )
                 )
 
-                content = (
-                    fetch_radar_tile(
-                        z,
-                        x,
-                        y,
-                    )
+                content = fetch_radar_tile(
+                    z,
+                    x,
+                    y,
                 )
 
                 self.send_response(
@@ -1214,20 +1014,14 @@ class Handler(
         if path.startswith(
             "/marine-alert/"
         ):
-            alert_name = (
-                unquote(
-                    path
-                    .removeprefix(
-                        "/marine-alert/"
-                    )
+            alert_name = unquote(
+                path.removeprefix(
+                    "/marine-alert/"
                 )
             )
 
-            url = (
-                MARINE_BULLETINS
-                .get(
-                    alert_name
-                )
+            url = MARINE_BULLETINS.get(
+                alert_name
             )
 
             if url is None:
@@ -1238,8 +1032,8 @@ class Handler(
                 return
 
             try:
-                content = (
-                    fetch(url)
+                content = fetch(
+                    url
                 )
 
                 self.send_response(
@@ -1272,10 +1066,8 @@ class Handler(
 
         if path == "/bulletin":
             try:
-                content = (
-                    fetch(
-                        SOURCE
-                    )
+                content = fetch(
+                    SOURCE
                 )
 
                 self.send_response(
