@@ -7,7 +7,9 @@ from datetime import datetime, time, timedelta
 from html import escape, unescape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO
-from urllib.parse import parse_qs, quote, unquote, urljoin, urlparse
+from threading import Lock
+from time import time as unix_time
+from urllib.parse import parse_qs, quote, unquote, urlencode, urljoin, urlparse
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
@@ -17,6 +19,7 @@ from pypdf import PdfReader
 SOURCE = "https://www.antiguamet.com/Daily_FCast.html"
 MARINE_STATUS = "https://www.antiguamet.com/Marine.html"
 RAINVIEWER_API = "https://api.rainviewer.com/public/weather-maps.json"
+WORLDTIDES_API = "https://www.worldtides.info/api/v3"
 
 MARINE_BULLETINS = {
     "High Surf Advisory":
@@ -34,6 +37,11 @@ OPENWEATHER_API_KEY = os.environ.get(
     "",
 ).strip()
 
+WORLDTIDES_API_KEY = os.environ.get(
+    "WORLDTIDES_API_KEY",
+    "",
+).strip()
+
 ANTIGUA_TIME = ZoneInfo("America/Antigua")
 
 WEEKDAYS = {
@@ -46,8 +54,12 @@ WEEKDAYS = {
     "sunday": 6,
 }
 
+TIDE_CACHE = {}
+TIDE_CACHE_LOCK = Lock()
+TIDE_CACHE_TTL_SECONDS = 3600
 
-def fetch(url):
+
+def fetch(url, timeout=20):
     request = Request(
         url,
         headers={"User-Agent": "SeaPoint/0.1"},
@@ -55,7 +67,7 @@ def fetch(url):
 
     with urlopen(
         request,
-        timeout=20,
+        timeout=timeout,
     ) as response:
         return response.read()
 
@@ -85,42 +97,48 @@ def pdf_to_text(data):
 
 
 def get_current_marine_links():
-    page = fetch(
-        MARINE_STATUS
-    ).decode(
-        "utf-8",
-        errors="ignore",
-    )
-
-    anchors = re.findall(
-        r'<a[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
-        page,
-        re.IGNORECASE | re.DOTALL,
-    )
-
-    found = {}
-
-    for href, label_html in anchors:
-        label = normalize_text(
-            unescape(
-                re.sub(
-                    r"<[^>]+>",
-                    " ",
-                    label_html,
-                )
-            )
+    try:
+        page = fetch(
+            MARINE_STATUS
+        ).decode(
+            "utf-8",
+            errors="ignore",
         )
 
-        for name in MARINE_BULLETINS:
-            if name.lower() in label.lower():
-                found[name] = urljoin(
-                    MARINE_STATUS,
-                    href,
-                )
+        anchors = re.findall(
+            r'<a[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
+            page,
+            re.IGNORECASE | re.DOTALL,
+        )
 
-    return found or dict(
-        MARINE_BULLETINS
-    )
+        found = {}
+
+        for href, label_html in anchors:
+            label = normalize_text(
+                unescape(
+                    re.sub(
+                        r"<[^>]+>",
+                        " ",
+                        label_html,
+                    )
+                )
+            )
+
+            for name in MARINE_BULLETINS:
+                if name.lower() in label.lower():
+                    found[name] = urljoin(
+                        MARINE_STATUS,
+                        href,
+                    )
+
+        return found or dict(
+            MARINE_BULLETINS
+        )
+
+    except Exception:
+        return dict(
+            MARINE_BULLETINS
+        )
 
 
 def parse_issue_datetime(text):
@@ -228,7 +246,6 @@ def parse_descriptor(
                     f"{day} {month} {year}",
                     date_format,
                 ).date()
-
                 break
 
             except ValueError:
@@ -291,7 +308,6 @@ def parse_descriptor(
         hour = int(
             explicit_time.group(1)
         )
-
         minute = int(
             explicit_time.group(2)
             or 0
@@ -374,8 +390,7 @@ def get_timing_window(
     timing_match = re.search(
         r"Timing:\s*(.*?)(?=Synopsis:)",
         text,
-        re.IGNORECASE
-        | re.DOTALL,
+        re.IGNORECASE | re.DOTALL,
     )
 
     if not timing_match:
@@ -644,14 +659,149 @@ def get_rainviewer_frames():
     )
 
     return {
-        "host":
-            data.get(
-                "host",
-                "https://tilecache.rainviewer.com",
-            ),
-        "frames":
-            frames,
+        "host": data.get(
+            "host",
+            "https://tilecache.rainviewer.com",
+        ),
+        "frames": frames,
     }
+
+
+def get_tides(
+    latitude,
+    longitude,
+):
+    if not WORLDTIDES_API_KEY:
+        raise RuntimeError(
+            "WorldTides API key is not configured"
+        )
+
+    if not -90 <= latitude <= 90:
+        raise ValueError(
+            "Latitude must be between -90 and 90"
+        )
+
+    if not -180 <= longitude <= 180:
+        raise ValueError(
+            "Longitude must be between -180 and 180"
+        )
+
+    cache_key = (
+        round(latitude, 4),
+        round(longitude, 4),
+    )
+
+    now = unix_time()
+
+    with TIDE_CACHE_LOCK:
+        cached = TIDE_CACHE.get(
+            cache_key
+        )
+
+        if (
+            cached
+            and now - cached["saved_at"]
+            < TIDE_CACHE_TTL_SECONDS
+        ):
+            return cached["payload"]
+
+    params = urlencode({
+        "date": "today",
+        "days": 2,
+        "lat": f"{latitude:.6f}",
+        "lon": f"{longitude:.6f}",
+        "datum": "CD",
+        "key": WORLDTIDES_API_KEY,
+    })
+
+    url = (
+        f"{WORLDTIDES_API}"
+        f"?extremes&localtime&{params}"
+    )
+
+    data = json.loads(
+        fetch(
+            url,
+            timeout=20,
+        ).decode(
+            "utf-8"
+        )
+    )
+
+    status = data.get(
+        "status",
+        200,
+    )
+
+    if status not in (
+        0,
+        200,
+        None,
+    ):
+        raise RuntimeError(
+            data.get(
+                "error",
+                "WorldTides request failed",
+            )
+        )
+
+    extremes = data.get(
+        "extremes"
+    ) or []
+
+    extremes = sorted(
+        extremes,
+        key=lambda event: event.get(
+            "dt",
+            0,
+        ),
+    )
+
+    payload = {
+        "ok": True,
+        "requestLat": data.get(
+            "requestLat",
+            latitude,
+        ),
+        "requestLon": data.get(
+            "requestLon",
+            longitude,
+        ),
+        "responseLat": data.get(
+            "responseLat"
+        ),
+        "responseLon": data.get(
+            "responseLon"
+        ),
+        "timezone": data.get(
+            "timezone"
+        ),
+        "datum": data.get(
+            "responseDatum"
+        ),
+        "station": data.get(
+            "station"
+        ),
+        "atlas": data.get(
+            "atlas"
+        ),
+        "callCount": data.get(
+            "callCount"
+        ),
+        "copyright": data.get(
+            "copyright",
+            "",
+        ),
+        "extremes": extremes,
+    }
+
+    with TIDE_CACHE_LOCK:
+        TIDE_CACHE[cache_key] = {
+            "saved_at": now,
+            "payload": payload,
+        }
+
+    return payload
 
 
 def radar_page(
@@ -675,470 +825,187 @@ def radar_page(
 
     return f"""<!DOCTYPE html>
 <html>
-
 <head>
-
 <meta charset="utf-8">
-
-<meta
-    name="viewport"
-    content="width=device-width, initial-scale=1.0"
->
-
-<title>
-SeaPoint Rain Radar
-</title>
-
-<link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
->
-
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SeaPoint Rain Radar</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
-
-* {{
-    box-sizing: border-box;
-}}
-
-html,
-body {{
+* {{ box-sizing: border-box; }}
+html, body {{
     width: 100%;
     height: 100%;
     margin: 0;
-
-    font-family:
-        Arial,
-        sans-serif;
-
-    background:
-        #eef5f8;
+    font-family: Arial, sans-serif;
+    background: #eef5f8;
 }}
-
 body {{
     display: flex;
     flex-direction: column;
     overflow: hidden;
 }}
-
 .topbar {{
     z-index: 1000;
-
-    background:
-        rgba(
-            255,
-            255,
-            255,
-            0.97
-        );
-
-    padding:
-        10px 12px;
-
-    box-shadow:
-        0 1px 6px
-        rgba(
-            0,
-            0,
-            0,
-            0.14
-        );
+    background: rgba(255,255,255,0.97);
+    padding: 10px 12px;
+    box-shadow: 0 1px 6px rgba(0,0,0,0.14);
 }}
-
 .title-row {{
     display: flex;
     align-items: center;
-    justify-content:
-        space-between;
-
+    justify-content: space-between;
     gap: 10px;
 }}
-
 .title {{
     font-size: 17px;
     font-weight: 700;
     color: #123c50;
 }}
-
 .live-badge {{
     border-radius: 999px;
-
-    background:
-        #e6f4f8;
-
-    color:
-        #087d9d;
-
-    padding:
-        5px 9px;
-
-    font-size:
-        12px;
-
-    font-weight:
-        700;
+    background: #e6f4f8;
+    color: #087d9d;
+    padding: 5px 9px;
+    font-size: 12px;
+    font-weight: 700;
 }}
-
-.legend-wrap {{
-    margin-top:
-        8px;
-}}
-
+.legend-wrap {{ margin-top: 8px; }}
 .legend-labels {{
-    display:
-        flex;
-
-    justify-content:
-        space-between;
-
-    font-size:
-        11px;
-
-    color:
-        #5d6f78;
-
-    margin-bottom:
-        3px;
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: #5d6f78;
+    margin-bottom: 3px;
 }}
-
 .legend-bar {{
-    height:
-        8px;
-
-    border-radius:
-        999px;
-
-    background:
-        linear-gradient(
-            90deg,
-            #68d8ff 0%,
-            #2ca25f 32%,
-            #ffe066 58%,
-            #ff922b 76%,
-            #d6336c 100%
-        );
+    height: 8px;
+    border-radius: 999px;
+    background: linear-gradient(
+        90deg,
+        #68d8ff 0%,
+        #2ca25f 32%,
+        #ffe066 58%,
+        #ff922b 76%,
+        #d6336c 100%
+    );
 }}
-
 .map-wrap {{
-    position:
-        relative;
-
-    flex:
-        1 1 auto;
-
-    min-height:
-        280px;
+    position: relative;
+    flex: 1 1 auto;
+    min-height: 280px;
 }}
-
 #map {{
-    width:
-        100%;
-
-    height:
-        100%;
+    width: 100%;
+    height: 100%;
 }}
-
 .loading {{
-    position:
-        absolute;
-
-    z-index:
-        800;
-
-    left:
-        50%;
-
-    top:
-        16px;
-
-    transform:
-        translateX(-50%);
-
-    background:
-        rgba(
-            255,
-            255,
-            255,
-            0.95
-        );
-
-    border-radius:
-        999px;
-
-    padding:
-        7px 12px;
-
-    font-size:
-        12px;
-
-    color:
-        #123c50;
-
-    box-shadow:
-        0 1px 5px
-        rgba(
-            0,
-            0,
-            0,
-            0.15
-        );
+    position: absolute;
+    z-index: 800;
+    left: 50%;
+    top: 16px;
+    transform: translateX(-50%);
+    background: rgba(255,255,255,0.95);
+    border-radius: 999px;
+    padding: 7px 12px;
+    font-size: 12px;
+    color: #123c50;
+    box-shadow: 0 1px 5px rgba(0,0,0,0.15);
+    white-space: nowrap;
 }}
-
 .bottom-panel {{
-    z-index:
-        1000;
-
-    background:
-        rgba(
-            255,
-            255,
-            255,
-            0.98
-        );
-
-    padding:
-        10px 12px 12px;
-
-    box-shadow:
-        0 -1px 6px
-        rgba(
-            0,
-            0,
-            0,
-            0.14
-        );
+    z-index: 1000;
+    background: rgba(255,255,255,0.98);
+    padding: 10px 12px 12px;
+    box-shadow: 0 -1px 6px rgba(0,0,0,0.14);
 }}
-
 .control-row {{
-    display:
-        flex;
-
-    align-items:
-        center;
-
-    gap:
-        10px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
 }}
-
 .play-button {{
-    width:
-        46px;
-
-    height:
-        46px;
-
-    flex:
-        0 0 46px;
-
-    border:
-        0;
-
-    border-radius:
-        50%;
-
-    background:
-        #087d9d;
-
-    color:
-        white;
-
-    font-size:
-        18px;
-
-    cursor:
-        pointer;
+    width: 46px;
+    height: 46px;
+    flex: 0 0 46px;
+    border: 0;
+    border-radius: 50%;
+    background: #087d9d;
+    color: white;
+    font-size: 18px;
+    cursor: pointer;
 }}
-
 .time-block {{
-    min-width:
-        0;
-
-    flex:
-        1;
+    min-width: 0;
+    flex: 1;
 }}
-
 .frame-time {{
-    font-weight:
-        700;
-
-    color:
-        #123c50;
-
-    font-size:
-        14px;
+    font-weight: 700;
+    color: #123c50;
+    font-size: 14px;
 }}
-
 .frame-status {{
-    margin-top:
-        2px;
-
-    color:
-        #6a7c85;
-
-    font-size:
-        11px;
+    margin-top: 2px;
+    color: #6a7c85;
+    font-size: 11px;
 }}
-
 #timeline {{
-    width:
-        100%;
-
-    margin-top:
-        9px;
-
-    accent-color:
-        #087d9d;
+    width: 100%;
+    margin-top: 9px;
+    accent-color: #087d9d;
 }}
-
 .timeline-labels {{
-    display:
-        flex;
-
-    justify-content:
-        space-between;
-
-    color:
-        #6a7c85;
-
-    font-size:
-        10px;
-
-    margin-top:
-        -1px;
+    display: flex;
+    justify-content: space-between;
+    color: #6a7c85;
+    font-size: 10px;
+    margin-top: -1px;
 }}
-
 .source {{
-    margin-top:
-        7px;
-
-    color:
-        #71828a;
-
-    font-size:
-        10px;
-
-    line-height:
-        1.3;
+    margin-top: 7px;
+    color: #71828a;
+    font-size: 10px;
+    line-height: 1.3;
 }}
-
-.source a {{
-    color:
-        #087d9d;
+.source a {{ color: #087d9d; }}
+@media (max-width: 520px) {{
+    .title {{ font-size: 15px; }}
 }}
-
-@media (
-    max-width:
-        520px
-) {{
-
-    .title {{
-        font-size:
-            15px;
-    }}
-}}
-
 </style>
-
 </head>
-
-
 <body>
-
-
 <div class="topbar">
-
     <div class="title-row">
-
-        <div class="title">
-            Rain Radar —
-            {safe_name_html}
-        </div>
-
-        <div
-            class="live-badge"
-            id="nowBadge"
-        >
-            RADAR
-        </div>
-
+        <div class="title">Rain Radar — {safe_name_html}</div>
+        <div class="live-badge" id="nowBadge">RADAR</div>
     </div>
-
-
     <div class="legend-wrap">
-
         <div class="legend-labels">
-
-            <span>
-                Light rain
-            </span>
-
-            <span>
-                Moderate
-            </span>
-
-            <span>
-                Heavy rain
-            </span>
-
+            <span>Light rain</span>
+            <span>Moderate</span>
+            <span>Heavy rain</span>
         </div>
-
-        <div class="legend-bar">
-        </div>
-
+        <div class="legend-bar"></div>
     </div>
-
 </div>
-
 
 <div class="map-wrap">
-
-    <div id="map">
-    </div>
-
-    <div
-        class="loading"
-        id="loadingMessage"
-    >
-        Loading radar frames…
-    </div>
-
+    <div id="map"></div>
+    <div class="loading" id="loadingMessage">Loading radar frames…</div>
 </div>
 
-
 <div class="bottom-panel">
-
     <div class="control-row">
-
         <button
             id="playPause"
             class="play-button"
             type="button"
             aria-label="Pause radar animation"
-        >
-            ❚❚
-        </button>
-
-
+        >❚❚</button>
         <div class="time-block">
-
-            <div
-                id="frameTime"
-                class="frame-time"
-            >
-                Loading…
-            </div>
-
-            <div
-                id="frameStatus"
-                class="frame-status"
-            >
-                Preparing radar animation
-            </div>
-
+            <div id="frameTime" class="frame-time">Loading…</div>
+            <div id="frameStatus" class="frame-status">Preparing radar animation</div>
         </div>
-
     </div>
-
-
     <input
         id="timeline"
         type="range"
@@ -1148,98 +1015,37 @@ body {{
         step="1"
         aria-label="Radar timeline"
     >
-
-
     <div class="timeline-labels">
-
-        <span>
-            Past
-        </span>
-
-        <span>
-            Now
-        </span>
-
+        <span>Past</span>
+        <span>Now</span>
     </div>
-
-
     <div class="source">
-
         Development radar:
-        <a
-            href="https://www.rainviewer.com/"
-            target="_blank"
-            rel="noopener"
-        >
-            RainViewer
-        </a>.
-
-        Production source will be
-        replaced before commercial
-        release.
-
+        <a href="https://www.rainviewer.com/" target="_blank" rel="noopener">RainViewer</a>.
+        Production source will be replaced before commercial release.
     </div>
-
 </div>
 
-
-<script
-    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
->
-</script>
-
-
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
+const locationName = {safe_name_js};
 
-const locationName =
-    {safe_name_js};
-
-
-const map =
-    L.map(
-        'map',
-        {{
-            zoomControl:
-                true
-        }}
-    )
-    .setView(
-        [
-            {latitude},
-            {longitude}
-        ],
-        7
-    );
-
+const map = L.map('map', {{ zoomControl: true }}).setView(
+    [{latitude}, {longitude}],
+    7
+);
 
 L.tileLayer(
     'https://tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png',
     {{
-        maxZoom:
-            18,
-
-        attribution:
-            '&copy; OpenStreetMap contributors'
+        maxZoom: 18,
+        attribution: '&copy; OpenStreetMap contributors'
     }}
-)
-.addTo(
-    map
-);
+).addTo(map);
 
-
-L.marker(
-    [
-        {latitude},
-        {longitude}
-    ]
-)
-.addTo(
-    map
-)
-.bindPopup(
-    locationName
-);
-
+L.marker([{latitude}, {longitude}])
+    .addTo(map)
+    .bindPopup(locationName);
 
 let frames = [];
 let radarHost = '';
@@ -1248,431 +1054,166 @@ let frameIndex = 0;
 let playing = true;
 let timer = null;
 
+const playPause = document.getElementById('playPause');
+const timeline = document.getElementById('timeline');
+const frameTime = document.getElementById('frameTime');
+const frameStatus = document.getElementById('frameStatus');
+const loadingMessage = document.getElementById('loadingMessage');
+const nowBadge = document.getElementById('nowBadge');
 
-const playPause =
-    document.getElementById(
-        'playPause'
-    );
-
-
-const timeline =
-    document.getElementById(
-        'timeline'
-    );
-
-
-const frameTime =
-    document.getElementById(
-        'frameTime'
-    );
-
-
-const frameStatus =
-    document.getElementById(
-        'frameStatus'
-    );
-
-
-const loadingMessage =
-    document.getElementById(
-        'loadingMessage'
-    );
-
-
-const nowBadge =
-    document.getElementById(
-        'nowBadge'
-    );
-
-
-function formatAntiguaTime(
-    unixSeconds
-) {{
-
-    const date =
-        new Date(
-            unixSeconds * 1000
-        );
-
+function formatAntiguaTime(unixSeconds) {{
+    const date = new Date(unixSeconds * 1000);
 
     return new Intl.DateTimeFormat(
         'en-US',
         {{
-            timeZone:
-                'America/Antigua',
-
-            weekday:
-                'short',
-
-            month:
-                'short',
-
-            day:
-                'numeric',
-
-            hour:
-                'numeric',
-
-            minute:
-                '2-digit'
+            timeZone: 'America/Antigua',
+            weekday: 'short',
+            month: 'short',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit'
         }}
-    )
-    .format(
-        date
-    );
+    ).format(date);
 }}
 
-
-function tileUrlForFrame(
-    frame
-) {{
-
-    return (
-        radarHost
+function tileUrlForFrame(frame) {{
+    return radarHost
         + frame.path
-        + '/256/{{z}}/{{x}}/{{y}}/2/1_1.png'
-    );
+        + '/256/{{z}}/{{x}}/{{y}}/2/1_1.png';
 }}
 
-
-function showFrame(
-    index
-) {{
-
-    if (
-        !frames.length
-        || index < 0
-        || index >= frames.length
-    ) {{
+function showFrame(index) {{
+    if (!frames.length || index < 0 || index >= frames.length) {{
         return;
     }}
 
+    frameIndex = index;
+    const frame = frames[frameIndex];
 
-    frameIndex =
-        index;
-
-
-    const frame =
-        frames[
-            frameIndex
-        ];
-
-
-    if (
-        radarLayer
-    ) {{
-        map.removeLayer(
-            radarLayer
-        );
+    if (radarLayer) {{
+        map.removeLayer(radarLayer);
     }}
 
+    radarLayer = L.tileLayer(
+        tileUrlForFrame(frame),
+        {{
+            opacity: 0.72,
+            maxNativeZoom: 7,
+            maxZoom: 18,
+            attribution: 'Radar: RainViewer'
+        }}
+    ).addTo(map);
 
-    radarLayer =
-        L.tileLayer(
-            tileUrlForFrame(
-                frame
-            ),
-            {{
-                opacity:
-                    0.72,
+    timeline.value = String(frameIndex);
+    frameTime.textContent = formatAntiguaTime(frame.time) + ' Antigua time';
 
-                maxNativeZoom:
-                    7,
-
-                maxZoom:
-                    18,
-
-                attribution:
-                    'Radar: RainViewer'
-            }}
-        )
-        .addTo(
-            map
-        );
-
-
-    timeline.value =
-        String(
-            frameIndex
-        );
-
-
-    frameTime.textContent =
-        formatAntiguaTime(
-            frame.time
-        )
-        + ' Antigua time';
-
-
-    if (
-        frameIndex
-        === frames.length - 1
-    ) {{
-
-        frameStatus.textContent =
-            'Latest available radar frame';
-
-
-        nowBadge.textContent =
-            'NOW';
-
-    }}
-    else {{
-
-        frameStatus.textContent =
-            'Past radar frame';
-
-
-        nowBadge.textContent =
-            'PAST';
-
+    if (frameIndex === frames.length - 1) {{
+        frameStatus.textContent = 'Latest available radar frame';
+        nowBadge.textContent = 'NOW';
+    }} else {{
+        frameStatus.textContent = 'Past radar frame';
+        nowBadge.textContent = 'PAST';
     }}
 }}
-
 
 function stopTimer() {{
-
-    if (
-        timer
-    ) {{
-        clearInterval(
-            timer
-        );
-
-        timer =
-            null;
+    if (timer) {{
+        clearInterval(timer);
+        timer = null;
     }}
 }}
-
 
 function startPlayback() {{
-
     stopTimer();
+    playing = true;
+    playPause.textContent = '❚❚';
+    playPause.setAttribute('aria-label', 'Pause radar animation');
 
+    timer = setInterval(() => {{
+        if (!frames.length) {{
+            return;
+        }}
 
-    playing =
-        true;
+        let nextIndex = frameIndex + 1;
 
+        if (nextIndex >= frames.length) {{
+            nextIndex = 0;
+        }}
 
-    playPause.textContent =
-        '❚❚';
-
-
-    playPause.setAttribute(
-        'aria-label',
-        'Pause radar animation'
-    );
-
-
-    timer =
-        setInterval(
-            () => {{
-
-                if (
-                    !frames.length
-                ) {{
-                    return;
-                }}
-
-
-                let nextIndex =
-                    frameIndex + 1;
-
-
-                if (
-                    nextIndex
-                    >= frames.length
-                ) {{
-                    nextIndex =
-                        0;
-                }}
-
-
-                showFrame(
-                    nextIndex
-                );
-
-            }},
-            700
-        );
+        showFrame(nextIndex);
+    }}, 700);
 }}
-
 
 function pausePlayback() {{
-
     stopTimer();
-
-
-    playing =
-        false;
-
-
-    playPause.textContent =
-        '▶';
-
-
-    playPause.setAttribute(
-        'aria-label',
-        'Play radar animation'
-    );
+    playing = false;
+    playPause.textContent = '▶';
+    playPause.setAttribute('aria-label', 'Play radar animation');
 }}
 
-
-playPause.addEventListener(
-    'click',
-    () => {{
-
-        if (
-            playing
-        ) {{
-            pausePlayback();
-        }}
-        else {{
-            startPlayback();
-        }}
-
-    }}
-);
-
-
-timeline.addEventListener(
-    'input',
-    () => {{
-
+playPause.addEventListener('click', () => {{
+    if (playing) {{
         pausePlayback();
-
-
-        showFrame(
-            Number(
-                timeline.value
-            )
-        );
-
+    }} else {{
+        startPlayback();
     }}
-);
+}});
 
+timeline.addEventListener('input', () => {{
+    pausePlayback();
+    showFrame(Number(timeline.value));
+}});
 
 async function loadRadarFrames() {{
-
     try {{
-
-        const response =
-            await fetch(
-                '/radar-frames',
-                {{
-                    cache:
-                        'no-store'
-                }}
-            );
-
-
-        if (
-            !response.ok
-        ) {{
-            throw new Error(
-                'Radar frames unavailable'
-            );
-        }}
-
-
-        const data =
-            await response.json();
-
-
-        radarHost =
-            data.host
-            || '';
-
-
-        frames =
-            data.frames
-            || [];
-
-
-        if (
-            !frames.length
-        ) {{
-            throw new Error(
-                'No radar frames returned'
-            );
-        }}
-
-
-        timeline.max =
-            String(
-                frames.length - 1
-            );
-
-
-        frameIndex =
-            0;
-
-
-        showFrame(
-            frameIndex
+        const response = await fetch(
+            '/radar-frames',
+            {{ cache: 'no-store' }}
         );
 
+        if (!response.ok) {{
+            throw new Error('Radar frames unavailable');
+        }}
 
-        loadingMessage.style.display =
-            'none';
+        const data = await response.json();
+        radarHost = data.host || '';
+        frames = data.frames || [];
 
+        if (!frames.length) {{
+            throw new Error('No radar frames returned');
+        }}
 
+        timeline.max = String(frames.length - 1);
+        frameIndex = 0;
+        showFrame(frameIndex);
+        loadingMessage.style.display = 'none';
         startPlayback();
-
-    }}
-    catch (
-        error
-    ) {{
-
+    }} catch (error) {{
         loadingMessage.textContent =
             'Animated radar unavailable — showing current precipitation';
-
-
         frameStatus.textContent =
             'Animated radar temporarily unavailable';
 
-
-        if (
-            {openweather_available}
-        ) {{
-
-            radarLayer =
-                L.tileLayer(
-                    '/radar-tile/{{z}}/{{x}}/{{y}}.png',
-                    {{
-                        opacity:
-                            0.72,
-
-                        maxZoom:
-                            18,
-
-                        attribution:
-                            '&copy; OpenWeather'
-                    }}
-                )
-                .addTo(
-                    map
-                );
+        if ({openweather_available}) {{
+            radarLayer = L.tileLayer(
+                '/radar-tile/{{z}}/{{x}}/{{y}}.png',
+                {{
+                    opacity: 0.72,
+                    maxZoom: 18,
+                    attribution: '&copy; OpenWeather'
+                }}
+            ).addTo(map);
         }}
 
-
-        playPause.disabled =
-            true;
-
-
-        timeline.disabled =
-            true;
+        playPause.disabled = true;
+        timeline.disabled = true;
     }}
 }}
 
-
 loadRadarFrames();
-
 </script>
-
-
 </body>
-
 </html>
 """
 
@@ -1750,6 +1291,45 @@ class Handler(
             "no-store",
         )
 
+        self.send_header(
+            "Content-Length",
+            str(len(content)),
+        )
+
+        self.end_headers()
+
+        self.wfile.write(
+            content
+        )
+
+    def send_content(
+        self,
+        content,
+        content_type,
+        status=200,
+        cache_control="no-store",
+    ):
+        self.send_response(
+            status
+        )
+
+        self.send_header(
+            "Content-Type",
+            content_type,
+        )
+
+        self.send_cors_headers()
+
+        self.send_header(
+            "Cache-Control",
+            cache_control,
+        )
+
+        self.send_header(
+            "Content-Length",
+            str(len(content)),
+        )
+
         self.end_headers()
 
         self.wfile.write(
@@ -1785,21 +1365,19 @@ class Handler(
             parsed.query
         )
 
-
         if path in (
             "/",
             "/health",
         ):
             self.send_json({
-                "status":
-                    "ok",
-
-                "service":
-                    "SeaPoint Alerts",
+                "status": "ok",
+                "service": "SeaPoint Alerts",
+                "tides": bool(
+                    WORLDTIDES_API_KEY
+                ),
             })
 
             return
-
 
         if path == "/alerts":
             try:
@@ -1808,15 +1386,11 @@ class Handler(
                 )
 
                 active_alerts = []
-
                 checked = {}
 
-                with (
-                    ThreadPoolExecutor(
-                        max_workers=4
-                    )
-                    as executor
-                ):
+                with ThreadPoolExecutor(
+                    max_workers=4
+                ) as executor:
                     for (
                         name,
                         result,
@@ -1824,9 +1398,7 @@ class Handler(
                         check_alert,
                         current_links.items(),
                     ):
-                        checked[
-                            name
-                        ] = result
+                        checked[name] = result
 
                         if result[
                             "active"
@@ -1835,22 +1407,17 @@ class Handler(
                                 name
                             )
 
-
                 self.send_json({
                     "alerts":
                         active_alerts,
-
                     "checked":
                         checked,
                 })
 
-
             except Exception as error:
                 self.send_json(
                     {
-                        "alerts":
-                            [],
-
+                        "alerts": [],
                         "error":
                             str(error),
                     },
@@ -1859,6 +1426,54 @@ class Handler(
 
             return
 
+        if path == "/tides":
+            try:
+                latitude = float(
+                    query.get(
+                        "lat",
+                        [""],
+                    )[0]
+                )
+
+                longitude = float(
+                    query.get(
+                        "lon",
+                        [""],
+                    )[0]
+                )
+
+                self.send_json(
+                    get_tides(
+                        latitude,
+                        longitude,
+                    )
+                )
+
+            except ValueError as error:
+                self.send_json(
+                    {
+                        "ok": False,
+                        "error":
+                            str(error),
+                    },
+                    400,
+                )
+
+            except Exception as error:
+                print(
+                    f"Tides error: {error}"
+                )
+
+                self.send_json(
+                    {
+                        "ok": False,
+                        "error":
+                            "Tide data unavailable",
+                    },
+                    502,
+                )
+
+            return
 
         if path == "/radar-frames":
             try:
@@ -1869,12 +1484,8 @@ class Handler(
             except Exception as error:
                 self.send_json(
                     {
-                        "host":
-                            "",
-
-                        "frames":
-                            [],
-
+                        "host": "",
+                        "frames": [],
                         "error":
                             str(error),
                     },
@@ -1882,7 +1493,6 @@ class Handler(
                 )
 
             return
-
 
         if path == "/radar":
             try:
@@ -1907,36 +1517,18 @@ class Handler(
                     )[0]
                 )
 
-
-                content = (
-                    radar_page(
-                        latitude,
-                        longitude,
-                        location_name,
-                    )
-                    .encode(
-                        "utf-8"
-                    )
+                content = radar_page(
+                    latitude,
+                    longitude,
+                    location_name,
+                ).encode(
+                    "utf-8"
                 )
 
-
-                self.send_response(
-                    200
-                )
-
-                self.send_header(
-                    "Content-Type",
+                self.send_content(
+                    content,
                     "text/html; charset=utf-8",
                 )
-
-                self.send_cors_headers()
-
-                self.end_headers()
-
-                self.wfile.write(
-                    content
-                )
-
 
             except Exception as error:
                 self.send_json(
@@ -1948,7 +1540,6 @@ class Handler(
                 )
 
             return
-
 
         if path.startswith(
             "/radar-tile/"
@@ -1964,9 +1555,7 @@ class Handler(
                     self.send_error(
                         404
                     )
-
                     return
-
 
                 z = int(
                     parts[1]
@@ -1976,63 +1565,34 @@ class Handler(
                     parts[2]
                 )
 
-                y_text = (
-                    parts[3]
-                )
+                y_text = parts[3]
 
-
-                if not (
-                    y_text
-                    .endswith(
-                        ".png"
-                    )
+                if not y_text.endswith(
+                    ".png"
                 ):
                     self.send_error(
                         404
                     )
-
                     return
 
-
                 y = int(
-                    y_text
-                    .removesuffix(
+                    y_text.removesuffix(
                         ".png"
                     )
                 )
 
-
-                content = (
-                    fetch_radar_tile(
-                        z,
-                        x,
-                        y,
-                    )
+                content = fetch_radar_tile(
+                    z,
+                    x,
+                    y,
                 )
 
-
-                self.send_response(
-                    200
-                )
-
-                self.send_header(
-                    "Content-Type",
+                self.send_content(
+                    content,
                     "image/png",
+                    cache_control=
+                        "public, max-age=300",
                 )
-
-                self.send_header(
-                    "Cache-Control",
-                    "public, max-age=300",
-                )
-
-                self.send_cors_headers()
-
-                self.end_headers()
-
-                self.wfile.write(
-                    content
-                )
-
 
             except Exception as error:
                 self.send_json(
@@ -2045,60 +1605,35 @@ class Handler(
 
             return
 
-
         if path.startswith(
             "/marine-alert/"
         ):
-            alert_name = (
-                unquote(
-                    path
-                    .removeprefix(
-                        "/marine-alert/"
-                    )
+            alert_name = unquote(
+                path.removeprefix(
+                    "/marine-alert/"
                 )
             )
 
-            url = (
-                MARINE_BULLETINS
-                .get(
-                    alert_name
-                )
+            url = MARINE_BULLETINS.get(
+                alert_name
             )
 
             if url is None:
                 self.send_error(
                     404
                 )
-
                 return
 
-
             try:
-                content = (
-                    fetch(
-                        url
-                    )
+                content = fetch(
+                    url
                 )
 
-
-                self.send_response(
-                    200
-                )
-
-                self.send_header(
-                    "Content-Type",
+                self.send_content(
+                    content,
                     "application/pdf",
                 )
 
-                self.send_cors_headers()
-
-                self.end_headers()
-
-                self.wfile.write(
-                    content
-                )
-
-
             except Exception as error:
                 self.send_json(
                     {
@@ -2109,34 +1644,17 @@ class Handler(
                 )
 
             return
-
 
         if path == "/bulletin":
             try:
-                content = (
-                    fetch(
-                        SOURCE
-                    )
+                content = fetch(
+                    SOURCE
                 )
 
-
-                self.send_response(
-                    200
-                )
-
-                self.send_header(
-                    "Content-Type",
+                self.send_content(
+                    content,
                     "text/html; charset=utf-8",
                 )
-
-                self.send_cors_headers()
-
-                self.end_headers()
-
-                self.wfile.write(
-                    content
-                )
-
 
             except Exception as error:
                 self.send_json(
@@ -2148,7 +1666,6 @@ class Handler(
                 )
 
             return
-
 
         self.send_error(
             404
@@ -2162,11 +1679,9 @@ PORT = int(
     )
 )
 
-
 print(
     f"SeaPoint backend running on port {PORT}"
 )
-
 
 ThreadingHTTPServer(
     (
