@@ -707,7 +707,7 @@ def get_tides(
 
     params = urlencode({
         "date": "today",
-        "days": 2,
+        "days": 7,
         "lat": f"{latitude:.6f}",
         "lon": f"{longitude:.6f}",
         "datum": "CD",
@@ -733,11 +733,7 @@ def get_tides(
         200,
     )
 
-    if status not in (
-        0,
-        200,
-        None,
-    ):
+    if status != 200:
         raise RuntimeError(
             data.get(
                 "error",
