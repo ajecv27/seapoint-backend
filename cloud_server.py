@@ -1044,11 +1044,15 @@ L.marker([{latitude}, {longitude}])
     .bindPopup(locationName);
 
 let frames = [];
+let layers = [];
 let radarHost = '';
-let radarLayer = null;
 let frameIndex = 0;
 let playing = true;
 let timer = null;
+let refreshToken = 0;
+let currentFramesKey = '';
+
+const radarOpacity = 0.72;
 
 const playPause = document.getElementById('playPause');
 const timeline = document.getElementById('timeline');
@@ -1057,95 +1061,171 @@ const frameStatus = document.getElementById('frameStatus');
 const loadingMessage = document.getElementById('loadingMessage');
 const nowBadge = document.getElementById('nowBadge');
 
+function notifyApp(message) {{
+    if (
+        window.SeaPointRadar &&
+        window.SeaPointRadar.postMessage
+    ) {{
+        window.SeaPointRadar.postMessage(message);
+    }}
+}}
+
 function formatAntiguaTime(unixSeconds) {{
-    const date = new Date(unixSeconds * 1000);
-
-    return new Intl.DateTimeFormat(
-        'en-US',
-        {{
-            timeZone: 'America/Antigua',
-            weekday: 'short',
-            month: 'short',
-            day: 'numeric',
-            hour: 'numeric',
-            minute: '2-digit'
-        }}
-    ).format(date);
+    return new Intl.DateTimeFormat('en-US', {{
+        timeZone: 'America/Antigua',
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit'
+    }}).format(
+        new Date(unixSeconds * 1000)
+    );
 }}
 
-function tileUrlForFrame(frame) {{
-    return radarHost
-        + frame.path
-        + '/256/{{z}}/{{x}}/{{y}}/2/1_1.png';
-}}
-
-function showFrame(index) {{
-    if (!frames.length || index < 0 || index >= frames.length) {{
-        return;
-    }}
-
-    frameIndex = index;
-    const frame = frames[frameIndex];
-
-    if (radarLayer) {{
-        map.removeLayer(radarLayer);
-    }}
-
-    radarLayer = L.tileLayer(
-        tileUrlForFrame(frame),
+function makeLayer(frame, opacity, onLoad) {{
+    const layer = L.tileLayer(
+        radarHost +
+        frame.path +
+        '/256/{{z}}/{{x}}/{{y}}/2/1_1.png',
         {{
-            opacity: 0.72,
+            opacity: opacity,
             maxNativeZoom: 7,
             maxZoom: 18,
             attribution: 'Radar: RainViewer'
         }}
-    ).addTo(map);
+    );
 
-    timeline.value = String(frameIndex);
-    frameTime.textContent = formatAntiguaTime(frame.time) + ' Antigua time';
-
-    if (frameIndex === frames.length - 1) {{
-        frameStatus.textContent = 'Latest available radar frame';
-        nowBadge.textContent = 'NOW';
-    }} else {{
-        frameStatus.textContent = 'Past radar frame';
-        nowBadge.textContent = 'PAST';
+    if (onLoad) {{
+        layer.once('load', onLoad);
     }}
+
+    layer.addTo(map);
+
+    const element = layer.getContainer();
+
+    if (element) {{
+        element.style.transition =
+            'opacity 420ms linear';
+    }}
+
+    return layer;
+}}
+
+function showFrame(index, animate = true) {{
+    if (
+        index < 0 ||
+        index >= frames.length ||
+        !layers[index]
+    ) {{
+        return;
+    }}
+
+    const previous = layers[frameIndex];
+    const next = layers[index];
+
+    next.bringToFront();
+
+    if (
+        animate &&
+        previous &&
+        previous !== next
+    ) {{
+        next.setOpacity(0);
+
+        requestAnimationFrame(() =>
+            requestAnimationFrame(() => {{
+                next.setOpacity(radarOpacity);
+                previous.setOpacity(0);
+            }})
+        );
+
+    }} else {{
+        layers.forEach((layer, n) => {{
+            if (layer) {{
+                layer.setOpacity(
+                    n === index ? radarOpacity : 0
+                );
+            }}
+        }});
+    }}
+
+    frameIndex = index;
+    timeline.value = String(index);
+
+    frameTime.textContent =
+        formatAntiguaTime(frames[index].time) +
+        ' Antigua time';
+
+    const latest =
+        index === frames.length - 1;
+
+    frameStatus.textContent = latest
+        ? 'Latest observed radar frame (not a forecast)'
+        : 'Earlier observed radar frame';
+
+    nowBadge.textContent =
+        latest ? 'LATEST' : 'PAST';
 }}
 
 function stopTimer() {{
     if (timer) {{
-        clearInterval(timer);
-        timer = null;
+        clearTimeout(timer);
+    }}
+
+    timer = null;
+}}
+
+function playbackStep() {{
+    if (
+        !playing ||
+        frames.length < 2
+    ) {{
+        return;
+    }}
+
+    timer = setTimeout(() => {{
+        const next =
+            (frameIndex + 1) % frames.length;
+
+        showFrame(next, true);
+        playbackStep();
+
+    }}, 1100);
+}}
+
+function startPlayback(holdLatest = false) {{
+    stopTimer();
+
+    playing = true;
+
+    playPause.textContent = '❚❚';
+
+    playPause.setAttribute(
+        'aria-label',
+        'Pause radar animation'
+    );
+
+    if (holdLatest) {{
+        timer = setTimeout(
+            playbackStep,
+            2500
+        );
+    }} else {{
+        playbackStep();
     }}
 }}
 
-function startPlayback() {{
-    stopTimer();
-    playing = true;
-    playPause.textContent = '❚❚';
-    playPause.setAttribute('aria-label', 'Pause radar animation');
-
-    timer = setInterval(() => {{
-        if (!frames.length) {{
-            return;
-        }}
-
-        let nextIndex = frameIndex + 1;
-
-        if (nextIndex >= frames.length) {{
-            nextIndex = 0;
-        }}
-
-        showFrame(nextIndex);
-    }}, 700);
-}}
-
 function pausePlayback() {{
-    stopTimer();
     playing = false;
+    stopTimer();
+
     playPause.textContent = '▶';
-    playPause.setAttribute('aria-label', 'Play radar animation');
+
+    playPause.setAttribute(
+        'aria-label',
+        'Play radar animation'
+    );
 }}
 
 playPause.addEventListener('click', () => {{
@@ -1158,56 +1238,203 @@ playPause.addEventListener('click', () => {{
 
 timeline.addEventListener('input', () => {{
     pausePlayback();
-    showFrame(Number(timeline.value));
+
+    showFrame(
+        Number(timeline.value),
+        false
+    );
 }});
 
 async function loadRadarFrames() {{
+    const token = ++refreshToken;
+
     try {{
         const response = await fetch(
             '/radar-frames',
-            {{ cache: 'no-store' }}
+            {{cache: 'no-store'}}
         );
 
         if (!response.ok) {{
-            throw new Error('Radar frames unavailable');
+            throw new Error(
+                'Radar data unavailable'
+            );
         }}
 
         const data = await response.json();
-        radarHost = data.host || '';
-        frames = data.frames || [];
 
-        if (!frames.length) {{
-            throw new Error('No radar frames returned');
+        const upcoming = (data.frames || [])
+            .filter(
+                f =>
+                    Number.isFinite(f.time) &&
+                    f.path
+            )
+            .sort(
+                (a, b) => a.time - b.time
+            )
+            .slice(-6);
+
+        if (!upcoming.length) {{
+            throw new Error(
+                'No recent observations'
+            );
         }}
 
-        timeline.max = String(frames.length - 1);
-        frameIndex = 0;
-        showFrame(frameIndex);
-        loadingMessage.style.display = 'none';
-        startPlayback();
-    }} catch (error) {{
-        loadingMessage.textContent =
-            'Animated radar unavailable — showing current precipitation';
-        frameStatus.textContent =
-            'Animated radar temporarily unavailable';
+        const key = upcoming
+            .map(f => f.time)
+            .join(',');
 
-        if ({openweather_available}) {{
-            radarLayer = L.tileLayer(
-                '/radar-tile/{{z}}/{{x}}/{{y}}.png',
-                {{
-                    opacity: 0.72,
-                    maxZoom: 18,
-                    attribution: '&copy; OpenWeather'
+        if (key === currentFramesKey) {{
+            return;
+        }}
+
+        if (token !== refreshToken) {{
+            return;
+        }}
+
+        currentFramesKey = key;
+
+        radarHost = data.host ||
+            'https://tilecache.rainviewer.com';
+
+        stopTimer();
+
+        const oldLayers = layers;
+
+        layers = Array(
+            upcoming.length
+        ).fill(null);
+
+        frames = upcoming;
+
+        const latestIndex =
+            frames.length - 1;
+
+        frameIndex = latestIndex;
+        timeline.max = String(latestIndex);
+
+        let settled = false;
+
+        const latestReady = () => {{
+            if (
+                settled ||
+                token !== refreshToken
+            ) {{
+                return;
+            }}
+
+            settled = true;
+
+            oldLayers.forEach(layer => {{
+                if (layer) {{
+                    map.removeLayer(layer);
                 }}
-            ).addTo(map);
-        }}
+            }});
 
-        playPause.disabled = true;
-        timeline.disabled = true;
+            showFrame(
+                latestIndex,
+                false
+            );
+
+            loadingMessage.style.display =
+                'none';
+
+            notifyApp('ready');
+
+            let remaining = latestIndex;
+            let started = false;
+
+            const begin = () => {{
+                if (
+                    started ||
+                    token !== refreshToken
+                ) {{
+                    return;
+                }}
+
+                started = true;
+
+                if (playing) {{
+                    startPlayback(true);
+                }}
+            }};
+
+            if (!remaining) {{
+                begin();
+            }}
+
+            for (
+                let i = 0;
+                i < latestIndex;
+                i++
+            ) {{
+                layers[i] = makeLayer(
+                    frames[i],
+                    0,
+                    () => {{
+                        remaining--;
+
+                        if (remaining === 0) {{
+                            begin();
+                        }}
+                    }}
+                );
+            }}
+
+            setTimeout(begin, 8000);
+        }};
+
+        layers[latestIndex] = makeLayer(
+            frames[latestIndex],
+            radarOpacity,
+            latestReady
+        );
+
+        setTimeout(
+            latestReady,
+            12000
+        );
+
+    }} catch (error) {{
+        if (!layers.some(Boolean)) {{
+            loadingMessage.textContent =
+                'Recent radar temporarily unavailable';
+
+            frameStatus.textContent =
+                'Showing current precipitation if available';
+
+            if ({openweather_available}) {{
+                L.tileLayer(
+                    '/radar-tile/{{z}}/{{x}}/{{y}}.png',
+                    {{
+                        opacity: 0.72,
+                        maxZoom: 18,
+                        attribution: '© OpenWeather'
+                    }}
+                ).addTo(map);
+
+                loadingMessage.style.display =
+                    'none';
+
+                notifyApp('ready');
+
+            }} else {{
+                notifyApp('error');
+            }}
+
+            pausePlayback();
+
+            playPause.disabled = true;
+            timeline.disabled = true;
+        }}
     }}
 }}
 
 loadRadarFrames();
+
+setInterval(
+    loadRadarFrames,
+    300000
+);
 </script>
 </body>
 </html>
