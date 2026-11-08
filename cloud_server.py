@@ -14,6 +14,10 @@ from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 from pypdf import PdfReader
+from forecast_maps import ForecastMaps
+from radar_view import radar_page
+
+FORECAST_MAPS = ForecastMaps()
 
 
 SOURCE = "https://www.antiguamet.com/Daily_FCast.html"
@@ -800,7 +804,7 @@ def get_tides(
     return payload
 
 
-def radar_page(
+def _legacy_radar_page(
     latitude,
     longitude,
     location_name,
@@ -1587,6 +1591,26 @@ class Handler(
         query = parse_qs(
             parsed.query
         )
+
+        if path == "/forecast-frames":
+            data = FORECAST_MAPS.snapshot()
+            self.send_json(data, 200 if data["status"] == "ready" else
+                           202 if data["status"] == "loading" else 503)
+            return
+
+        if path.startswith("/forecast-frame/"):
+            image = FORECAST_MAPS.image(path.removeprefix("/forecast-frame/"))
+            if image is None:
+                self.send_error(404)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(image)))
+            self.send_header("Cache-Control", "public, max-age=86400, immutable")
+            self.send_cors_headers()
+            self.end_headers()
+            self.wfile.write(image)
+            return
 
         if path in (
             "/",
