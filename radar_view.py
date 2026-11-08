@@ -12,6 +12,7 @@ HTML = r'''<!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>SeaPoint Rain Map</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
 <style>
 :root{color-scheme:dark;--panel:rgba(30,39,49,.94);--line:rgba(255,255,255,.18);--blue:#158ef5;--safe:env(safe-area-inset-bottom,0px)}
 *{box-sizing:border-box}html,body{height:100%;width:100%;margin:0;overflow:hidden;font-family:Arial,Helvetica,sans-serif;background:#153856;color:#fff}
@@ -55,26 +56,40 @@ button,input{font:inherit}button{cursor:pointer;-webkit-tap-highlight-color:tran
 <section id="source-panel" hidden aria-labelledby="source-title"><button id="source-close" aria-label="Close map details">×</button><h2 id="source-title">Map sources</h2><div id="availability" role="status">Checking weather data…</div>
 <p><a href="https://www.rainviewer.com/" target="_blank" rel="noopener">RainViewer</a> supplies recent observed radar. Coverage varies.</p>
 <p><a href="https://www.ncei.noaa.gov/products/weather-climate-models/global-forecast" target="_blank" rel="noopener">NOAA GFS</a> supplies the hourly precipitation forecast, up to 24 hours ahead. Its grid is approximately 28 km; smooth blending adds no spatial detail.</p>
-<p>Forecast coverage: eastern Caribbean, 10–23°N and 68–55°W. Forecast rain rates use mm/h. Radar colours use RainViewer’s scale.</p><p id="model-run"></p>
+<p>Forecast coverage: eastern Caribbean, 10–23°N and 68–55°W. Forecast rain rates use mm/h. Radar colours use RainViewer’s scale.</p><p id="model-run"></p><p id="basemap-status"></p><p>Map: OpenFreeMap / OpenMapTiles / OpenStreetMap contributors. Terrain shading: Esri, USGS, NOAA.</p>
 </section>
 <footer id="player" aria-label="Animation controls"><div class="player-row">
 <button id="play" aria-label="Play animation" disabled><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 4 14 8-14 8Z" fill="currentColor" stroke="none"/></svg></button><div class="time-block"><div id="clock">Loading radar</div><div id="detail">Observed rain</div></div>
 <button id="jump-latest" aria-label="Go to latest radar frame" disabled><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 5 10 7-10 7ZM19 5v14"/></svg></button>
 </div><div class="scrubber"><input id="timeline" type="range" min="0" max="1" step="1" value="0" aria-label="Weather map time" disabled></div>
 <div class="timeline-labels"><span id="start">Recent observations</span><span class="zone">Antigua time</span><span id="end">Latest</span></div></footer>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.1.4/leaflet-maplibre-gl.js"></script><script>
 'use strict';
 const config=__CONFIG__;
 document.getElementById('title').textContent=config.name;
 const map=L.map('map',{zoomControl:false,zoomSnap:.5,zoomDelta:.5}).setView([config.lat,config.lon],10.5);
-L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxNativeZoom:18,maxZoom:12,attribution:'Imagery: Esri, Maxar, Earthstar Geographics'}).addTo(map);
-map.createPane('placeLabels');map.getPane('placeLabels').style.zIndex=450;map.getPane('placeLabels').style.pointerEvents='none';
-L.tileLayer('https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',{maxNativeZoom:18,maxZoom:12,pane:'placeLabels',attribution:'Labels: Esri'}).addTo(map);
+let flatBasemap=null;
+function loadFlatBasemap(){
+ try{
+  flatBasemap=L.maplibreGL({style:'/basemap-style',interactive:false,attributionControl:{customAttribution:'<a href="https://openfreemap.org/" target="_blank" rel="noopener">OpenFreeMap</a> · © OpenMapTiles · © OpenStreetMap contributors'}}).addTo(map);
+  flatBasemap.getMaplibreMap().on('error',()=>{
+   document.getElementById('basemap-status').textContent='Base map is temporarily unavailable; weather layers remain available.';
+  });
+ }catch(_){
+  document.getElementById('basemap-status').textContent='This device could not load the map-style basemap.';
+ }
+}
+loadFlatBasemap();
+map.createPane('terrain');map.getPane('terrain').style.zIndex=250;
+map.getPane('terrain').style.mixBlendMode='multiply';map.getPane('terrain').style.pointerEvents='none';
+L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}',{pane:'terrain',opacity:.24,maxNativeZoom:16,maxZoom:12,attribution:'Terrain: Esri, USGS, NOAA'}).addTo(map);
 L.circleMarker([config.lat,config.lon],{pane:'markerPane',radius:8,color:'#fff',weight:3,fillColor:'#1498ff',fillOpacity:1}).addTo(map).bindPopup(document.createTextNode(config.name));
 const $=id=>document.getElementById(id);
 const timeFormatter=new Intl.DateTimeFormat('en-US',{timeZone:'America/Antigua',weekday:'short',hour:'numeric',minute:'2-digit'});
 const format=t=>timeFormatter.format(new Date(t*1000));
-let observed=[],forecast=[],active=[],selection='observed',playing=false,position=0,lastTick=0,loading=false,revision=0;
+let observed=[],forecast=[],active=[],selection='observed',playing=false,position=0,lastTick=0,holdUntil=0,loading=false,revision=0;
 let forecastMeta=null,forecastRetry=null,visibleLayers=new Set();
 let lastLegendKind='',lastDetail='';
 const loaded=new Map(),pending=new Map();
@@ -82,7 +97,7 @@ const key=f=>f.kind+':'+f.time;
 function notify(){if(window.SeaPointRadar)window.SeaPointRadar.postMessage('ready');}
 notify();
 function announce(message){$('availability').textContent=message;}
-function setPlaying(value){playing=value;lastTick=0;$('play').innerHTML=value?'<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4v16m8-16v16" stroke-width="4"/></svg>':'<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 4 14 8-14 8Z" fill="currentColor" stroke="none"/></svg>';$('play').setAttribute('aria-label',value?'Pause animation':'Play animation');}
+function setPlaying(value){playing=value;lastTick=0;holdUntil=0;if(value&&selection==='observed'&&active.length&&position>=active.at(-1).time){position=active[0].time;render();}$('play').innerHTML=value?'<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4v16m8-16v16" stroke-width="4"/></svg>':'<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 4 14 8-14 8Z" fill="currentColor" stroke="none"/></svg>';$('play').setAttribute('aria-label',value?'Pause animation':'Play animation');}
 function frameLayer(frame){
  const id=key(frame);if(loaded.has(id))return Promise.resolve(loaded.get(id));if(pending.has(id))return pending.get(id);
  const task=new Promise((resolve,reject)=>{
@@ -167,7 +182,18 @@ $('play').onclick=()=>setPlaying(!playing);
 $('timeline').oninput=()=>{setPlaying(false);position=Number($('timeline').value);render();};
 function tick(ms){
  if(playing&&active.length>1){
-  if(lastTick){const candidate=position+Math.min(ms-lastTick,100)*1.8;const old=position;position=candidate>active.at(-1).time?active[0].time:candidate;if(render()===false)position=old;}
+  if(lastTick){
+   if(holdUntil){
+    if(ms>=holdUntil){holdUntil=0;position=active[0].time;render();}
+   }else{
+    // A ten-minute radar interval now takes two seconds, six times slower.
+    const rate=selection==='observed'?300:1800;
+    const candidate=position+Math.min(ms-lastTick,100)*rate/1000;
+    const old=position;position=Math.min(candidate,active.at(-1).time);
+    if(render()===false)position=old;
+    else if(candidate>=active.at(-1).time)holdUntil=ms+(selection==='observed'?2500:1500);
+   }
+  }
   lastTick=ms;
  }else lastTick=0;
  requestAnimationFrame(tick);

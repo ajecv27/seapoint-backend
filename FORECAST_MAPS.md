@@ -6,10 +6,12 @@ and smooth blending between hourly forecast images. No Android app replacement
 is needed: the existing RadarScreen already loads this backend page.
 
 The player offers Radar and Forecast modes, defaulting to Radar's latest image.
-A full-screen satellite map has a compact intensity legend, floating layer and
+A green land / blue water vector map with subtle terrain shading has a compact intensity legend, floating layer and
 map controls, and a dark bottom playback panel. Source details are available
 through the info button. Observations and forecasts have explicit labels and
-separate legends. Interpolation smooths
+separate legends. Radar playback advances a ten-minute image interval over two
+seconds, then holds the latest image for 2.5 seconds before looping. Forecast
+playback retains its existing speed, with a brief hold at the end. Interpolation smooths
 images only; it is not additional weather data or a radar nowcast. RainViewer
 coverage can be incomplete. Missing images are never described as dry weather.
 
@@ -26,7 +28,7 @@ coverage can be incomplete. Missing images are never described as dry weather.
   to the region, and projected to Web Mercator for alignment with the map.
 - Precipitation below 0.1 mm/hour is transparent. Higher intensities use the
   labelled forecast scale. Provider observations retain RainViewer's colours.
-- Satellite imagery/place labels: Esri. Existing basemap/provider terms and attribution
+- Basemap/place labels: OpenFreeMap, OpenMapTiles, and OpenStreetMap. Terrain shading: Esri, USGS, NOAA. Existing basemap/provider terms and attribution
   requirements still apply; this is a development implementation, not a review
   of commercial data licensing.
 
@@ -75,3 +77,17 @@ running local backend. `CHROMIUM_PATH` overrides the browser executable, and
 `RADAR_SCREENSHOT` optionally saves a preview. External assets are fetched with
 Python's TLS-verifying HTTP client so managed proxy CA trust also works in the
 browser test. Provider outages in these tests are deliberate test-only mocks.
+
+## Basemap rendering
+
+`/basemap-style` caches OpenFreeMap's Liberty style and applies SeaPoint's map
+colours. Satellite imagery, 3D buildings, and street-map clutter are removed.
+Actual coastline geometry and place names are retained. MapLibre renders the
+vector map inside the existing Leaflet weather player; Esri's grayscale
+hillshade is blended lightly over it to retain gentle terrain relief. No
+additional subscription or API key is required.
+
+The browser needs WebGL (available on the target Samsung device). The automated
+browser checks allow Chromium's software WebGL renderer in the test environment.
+Weather overlays remain independent of the basemap, and the source details
+report a basemap loading failure rather than inventing geography.
