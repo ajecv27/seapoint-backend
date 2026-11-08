@@ -99,6 +99,15 @@ with sync_playwright() as playwright:
     assert page.locator('#observed').get_attribute('aria-pressed') == 'false'
     page.wait_for_function("!document.getElementById('timeline').disabled", timeout=120000)
     assert page.locator('#mode').inner_text() == 'FORECAST'
+    assert page.evaluate("""() => {
+        let markerPane, imagePane;
+        map.eachLayer(layer => {
+            if (layer instanceof L.CircleMarker) markerPane=layer.getPane();
+            if (layer instanceof L.ImageOverlay) imagePane=layer.getPane();
+        });
+        return markerPane && imagePane &&
+            Number(getComputedStyle(markerPane).zIndex)>Number(getComputedStyle(imagePane).zIndex);
+    }""")
     print('STATE', json.dumps(page.evaluate(
         "({frames:active.length,first:active[0].time,last:active.at(-1).time,"
         "mode:document.getElementById('mode').textContent,"
