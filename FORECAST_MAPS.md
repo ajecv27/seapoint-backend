@@ -5,8 +5,11 @@ radar, a NOAA GFS precipitation forecast, play/pause, a draggable time slider,
 and smooth blending between hourly forecast images. No Android app replacement
 is needed: the existing RadarScreen already loads this backend page.
 
-The player offers Past + forecast, Radar, and Forecast modes. Observations and
-forecasts have explicit labels and separate legends. Interpolation smooths
+The player offers Radar and Forecast modes, defaulting to Radar's latest image.
+A full-screen satellite map has a compact intensity legend, floating layer and
+map controls, and a dark bottom playback panel. Source details are available
+through the info button. Observations and forecasts have explicit labels and
+separate legends. Interpolation smooths
 images only; it is not additional weather data or a radar nowcast. RainViewer
 coverage can be incomplete. Missing images are never described as dry weather.
 
@@ -23,7 +26,7 @@ coverage can be incomplete. Missing images are never described as dry weather.
   to the region, and projected to Web Mercator for alignment with the map.
 - Precipitation below 0.1 mm/hour is transparent. Higher intensities use the
   labelled forecast scale. Provider observations retain RainViewer's colours.
-- Ocean basemap/labels: Esri. Existing basemap/provider terms and attribution
+- Satellite imagery/place labels: Esri. Existing basemap/provider terms and attribution
   requirements still apply; this is a development implementation, not a review
   of commercial data licensing.
 
