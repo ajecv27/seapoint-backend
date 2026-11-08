@@ -39,7 +39,7 @@ def external(route):
         else:
             result = asset_cache[url]
         status, body, content_type = result
-        route.fulfill(status=status, body=body, content_type=content_type)
+        route.fulfill(status=status, body=body, content_type=content_type, headers={'Access-Control-Allow-Origin':'*'})
     except Exception:
         route.abort()
 
@@ -78,10 +78,13 @@ def check_layout(page):
 with sync_playwright() as playwright:
     browser = playwright.chromium.launch(
         executable_path=os.environ.get('CHROMIUM_PATH', '/usr/bin/chromium'),
-        headless=True, args=['--no-sandbox'])
+        headless=True, args=['--no-sandbox', '--enable-unsafe-swiftshader'])
     page = browser.new_page(viewport={'width': 390, 'height': 844}, device_scale_factor=1)
     attach(page)
     open_map(page)
+    page.wait_for_function("flatBasemap && flatBasemap.getMaplibreMap().isStyleLoaded()", timeout=90000)
+    assert page.evaluate("flatBasemap.getMaplibreMap().getStyle().layers.find(l=>l.id==='background').paint['background-color'] === '#4d8958'")
+    assert page.evaluate("!flatBasemap.getMaplibreMap().getStyle().layers.some(l=>l.type==='raster'||l.type==='fill-extrusion')")
     assert page.locator('#all').count() == 0
     assert 'Past + forecast' not in page.locator('body').inner_text()
     assert page.locator('#observed').get_attribute('aria-pressed') == 'true'

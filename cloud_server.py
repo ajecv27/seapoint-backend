@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 from pypdf import PdfReader
 from forecast_maps import ForecastMaps
 from radar_view import radar_page
+from basemap_service import basemap_document
 
 FORECAST_MAPS = ForecastMaps()
 
@@ -1591,6 +1592,13 @@ class Handler(
         query = parse_qs(
             parsed.query
         )
+
+        if path == "/basemap-style":
+            try:
+                self.send_json(basemap_document())
+            except Exception:
+                self.send_json({"error": "Map style temporarily unavailable"}, 503)
+            return
 
         if path == "/forecast-frames":
             data = FORECAST_MAPS.snapshot()
