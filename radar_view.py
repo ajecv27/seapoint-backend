@@ -70,7 +70,7 @@ const map=L.map('map',{zoomControl:false,zoomSnap:.5,zoomDelta:.5}).setView([con
 L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxNativeZoom:18,maxZoom:12,attribution:'Imagery: Esri, Maxar, Earthstar Geographics'}).addTo(map);
 map.createPane('placeLabels');map.getPane('placeLabels').style.zIndex=450;map.getPane('placeLabels').style.pointerEvents='none';
 L.tileLayer('https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',{maxNativeZoom:18,maxZoom:12,pane:'placeLabels',attribution:'Labels: Esri'}).addTo(map);
-L.circleMarker([config.lat,config.lon],{radius:8,color:'#fff',weight:3,fillColor:'#1498ff',fillOpacity:1}).addTo(map).bindPopup(document.createTextNode(config.name));
+L.circleMarker([config.lat,config.lon],{pane:'markerPane',radius:8,color:'#fff',weight:3,fillColor:'#1498ff',fillOpacity:1}).addTo(map).bindPopup(document.createTextNode(config.name));
 const $=id=>document.getElementById(id);
 const timeFormatter=new Intl.DateTimeFormat('en-US',{timeZone:'America/Antigua',weekday:'short',hour:'numeric',minute:'2-digit'});
 const format=t=>timeFormatter.format(new Date(t*1000));
