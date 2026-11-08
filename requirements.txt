@@ -1,2 +1,5 @@
 pypdf
 tzdata
+numpy>=1.26,<3
+Pillow>=10,<13
+eccodes>=2.40,<3

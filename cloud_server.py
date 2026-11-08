@@ -14,9 +14,10 @@ from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 from pypdf import PdfReader
-from openweather_current import CurrentWeather, WeatherUnavailable
+from forecast_maps import ForecastMaps
+from radar_view import radar_page
 
-CURRENT_WEATHER = CurrentWeather()
+FORECAST_MAPS = ForecastMaps()
 
 
 SOURCE = "https://www.antiguamet.com/Daily_FCast.html"
@@ -803,7 +804,7 @@ def get_tides(
     return payload
 
 
-def radar_page(
+def _legacy_radar_page(
     latitude,
     longitude,
     location_name,
@@ -1591,18 +1592,24 @@ class Handler(
             parsed.query
         )
 
-        if path == "/weather-current":
-            try:
-                self.send_json(CURRENT_WEATHER.get(
-                    query.get("lat", [None])[0],
-                    query.get("lon", [None])[0],
-                ))
-            except ValueError:
-                self.send_json({"error": "Invalid coordinates"}, 400)
-            except WeatherUnavailable as error:
-                self.send_json({"error": str(error)}, 503)
-            except Exception:
-                self.send_json({"error": "Current weather temporarily unavailable"}, 503)
+        if path == "/forecast-frames":
+            data = FORECAST_MAPS.snapshot()
+            self.send_json(data, 200 if data["status"] == "ready" else
+                           202 if data["status"] == "loading" else 503)
+            return
+
+        if path.startswith("/forecast-frame/"):
+            image = FORECAST_MAPS.image(path.removeprefix("/forecast-frame/"))
+            if image is None:
+                self.send_error(404)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(image)))
+            self.send_header("Cache-Control", "public, max-age=86400, immutable")
+            self.send_cors_headers()
+            self.end_headers()
+            self.wfile.write(image)
             return
 
         if path in (
