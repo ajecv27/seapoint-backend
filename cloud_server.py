@@ -14,6 +14,9 @@ from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 from pypdf import PdfReader
+from openweather_current import CurrentWeather, WeatherUnavailable
+
+CURRENT_WEATHER = CurrentWeather()
 
 
 SOURCE = "https://www.antiguamet.com/Daily_FCast.html"
@@ -1587,6 +1590,20 @@ class Handler(
         query = parse_qs(
             parsed.query
         )
+
+        if path == "/weather-current":
+            try:
+                self.send_json(CURRENT_WEATHER.get(
+                    query.get("lat", [None])[0],
+                    query.get("lon", [None])[0],
+                ))
+            except ValueError:
+                self.send_json({"error": "Invalid coordinates"}, 400)
+            except WeatherUnavailable as error:
+                self.send_json({"error": str(error)}, 503)
+            except Exception:
+                self.send_json({"error": "Current weather temporarily unavailable"}, 503)
+            return
 
         if path in (
             "/",

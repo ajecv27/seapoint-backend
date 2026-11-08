@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+openweather-cache.sqlite3*
+.env
