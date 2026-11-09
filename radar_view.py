@@ -20,9 +20,9 @@ button,input{font:inherit}button{cursor:pointer;-webkit-tap-highlight-color:tran
 #map{position:absolute;inset:0;height:100%;width:100%;z-index:0;background:#163957}.leaflet-image-layer{image-rendering:auto}.rain-overlay{filter:blur(1.3px);image-rendering:auto}.leaflet-container{font-family:Arial,Helvetica,sans-serif}.leaflet-control-attribution{background:rgba(17,29,40,.78)!important;color:#dce6ed!important;font-size:9px!important;max-width:94vw;line-height:1.35!important;padding:3px 6px!important;border-radius:5px}.leaflet-control-attribution a{color:#dce6ed!important}.leaflet-bottom.leaflet-right{bottom:calc(5px + var(--safe));right:8px}.leaflet-popup-content{color:#17384c}
 #legend{position:absolute;inset:0 0 auto;z-index:700;height:35px;background:linear-gradient(90deg,#64d2ff,#2d8cf5,#6a4ed3,#d7378f,#ff9e46,#ffe641);box-shadow:0 1px 8px #0003;display:flex;align-items:center;justify-content:space-around;color:white;font-weight:700;text-shadow:0 1px 3px #000,0 0 5px #0009;font-size:14px}
 #legend.radar{background:linear-gradient(90deg,#cec087,#00a3e0,#005588,#ffaa00,#c10000,#ff77ff)}
-.mode-switch{position:absolute;top:50px;left:50%;transform:translateX(-50%);z-index:700;display:flex;padding:4px;gap:4px;background:var(--panel);border:1px solid var(--line);border-radius:30px;box-shadow:0 4px 18px #0004}
-.mode-switch button{min-height:44px;min-width:112px;display:flex;align-items:center;justify-content:center;gap:8px;border:0;border-radius:24px;background:transparent;color:#d6dfe5;font-size:14px;font-weight:600;transition:background .15s}
-.mode-switch button.active{color:white;background:var(--blue);box-shadow:0 2px 8px #0015}.icon{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+
+
+.icon{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
 .notice{position:absolute;top:163px;left:50%;transform:translateX(-50%);z-index:650;background:rgba(24,37,49,.70);border:1px solid var(--line);padding:9px 13px;border-radius:15px;font-size:12px;line-height:1.4;text-align:center;max-width:calc(100% - 80px);width:max-content;pointer-events:none}
 .map-tools{position:absolute;right:12px;bottom:calc(164px + var(--safe));z-index:650;display:flex;flex-direction:column;gap:8px}.round{height:46px;width:46px;border-radius:50%;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;color:#fff;background:var(--panel);box-shadow:0 2px 10px #0003}.round .icon{width:23px;height:23px}#recenter{background:var(--blue);border-color:transparent}#zoom-in,#zoom-out{font-size:25px;font-weight:300}
 .source-tools{position:absolute;left:12px;bottom:calc(158px + var(--safe));z-index:650;display:flex;align-items:center;gap:7px}#model-chip{background:var(--panel);border:1px solid var(--line);padding:8px 11px;border-radius:12px;line-height:1.3;font-size:11px;font-weight:600;text-shadow:0 1px 2px #0004}#model-chip small{display:block;color:#b8c8d6;font-size:10px;font-weight:400}
@@ -32,22 +32,19 @@ button,input{font:inherit}button{cursor:pointer;-webkit-tap-highlight-color:tran
 #timeline{position:relative;width:100%;height:36px;margin:0;appearance:none;-webkit-appearance:none;background:transparent;cursor:pointer;touch-action:pan-y}#timeline::-webkit-slider-runnable-track{height:3px;border-radius:4px;background:#b3c7d84d}#timeline::-webkit-slider-thumb{-webkit-appearance:none;width:7px;height:25px;margin-top:-11px;border-radius:3px;background:#219cff;box-shadow:0 0 0 4px #219cff22}#timeline::-moz-range-track{height:3px;background:#b3c7d84d}#timeline::-moz-range-thumb{height:25px;width:7px;border:0;border-radius:3px;background:#219cff}
 .timeline-labels{display:flex;justify-content:space-between;font-size:10px;color:#acbbc9;gap:8px}.timeline-labels span{white-space:nowrap}.timeline-labels .zone{color:#d8e5ef}
 #source-panel{position:absolute;left:auto;right:12px;top:112px;bottom:auto;width:calc(100% - 24px);z-index:800;max-width:420px;max-height:calc(100% - 270px);overflow:auto;background:#202b36d6;border:1px solid var(--line);border-radius:20px;box-shadow:0 5px 22px #0006;padding:16px;color:#d5e2eb;font-size:12px;line-height:1.5}#source-panel h2{color:white;font-size:15px;margin:0 45px 12px 0}#source-panel p{margin:8px 0}#source-panel a{color:#8acbff}#source-close{float:right;width:44px;height:44px;margin:-10px -10px 0 0;border:0;border-radius:50%;background:transparent;color:white;font-size:26px}#availability{color:#99d7ff}
-@media(min-width:800px){.mode-switch{top:54px}#player{padding:14px 20px 11px}.map-tools{right:22px}.source-tools{left:22px}}
-@media(max-width:340px){#clock{font-size:15px}.mode-switch button{min-width:100px}.timeline-labels{font-size:9px}#player{left:8px;right:8px;padding-left:10px;padding-right:10px}}
-@media(max-height:500px){#legend{height:27px;font-size:12px}.mode-switch{top:35px}.mode-switch button{min-height:44px;min-width:100px}.notice{top:93px;max-width:70%}.map-tools{bottom:calc(126px + var(--safe));gap:5px;right:10px}.round{height:44px;width:44px}.source-tools{bottom:calc(124px + var(--safe));left:10px}#player{bottom:calc(8px + var(--safe));padding:6px 14px;border-radius:20px;max-width:600px}#clock{font-size:16px}#detail{font-size:10px;margin-top:0}.scrubber{margin-top:0;height:30px}#timeline{height:30px}.timeline-labels{font-size:9px}#source-panel{top:94px;bottom:auto;max-height:calc(100% - 224px)}}
+@media(min-width:800px){#player{padding:14px 20px 11px}.map-tools{right:22px}.source-tools{left:22px}}
+@media(max-width:340px){#clock{font-size:15px}.timeline-labels{font-size:9px}#player{left:8px;right:8px;padding-left:10px;padding-right:10px}}
+@media(max-height:500px){#legend{height:27px;font-size:12px}.notice{top:93px;max-width:70%}.map-tools{bottom:calc(126px + var(--safe));gap:5px;right:10px}.round{height:44px;width:44px}.source-tools{bottom:calc(124px + var(--safe));left:10px}#player{bottom:calc(8px + var(--safe));padding:6px 14px;border-radius:20px;max-width:600px}#clock{font-size:16px}#detail{font-size:10px;margin-top:0}.scrubber{margin-top:0;height:30px}#timeline{height:30px}.timeline-labels{font-size:9px}#source-panel{top:94px;bottom:auto;max-height:calc(100% - 224px)}}
 
 #info-toggle{position:absolute;top:54px;right:12px;z-index:750;}
 #credits-notice{position:absolute;top:112px;left:12px;z-index:650;max-width:calc(100% - 24px);padding:6px 9px;border-radius:10px;background:#1e2731bf;color:#c4d9e6;font-size:10px;line-height:1.5;}
 #credits-notice a{color:inherit;}
 @media(max-height:500px){#info-toggle{top:38px;}#credits-notice{top:92px;}}
+#now-marker{position:absolute;z-index:3;height:17px;width:2px;top:9px;background:#ffffffa6;pointer-events:none;}#now-marker::before{content:"Now";position:absolute;top:-11px;left:-9px;font-size:8px;color:#dce8f0;white-space:nowrap;}
 @media(prefers-reduced-motion:reduce){button{transition:none}}
 </style></head><body>
 <div id="map" aria-label="SeaPoint rain map"></div>
 <div id="legend" class="radar" aria-label="Rain intensity"><span>Rain</span><span>Light</span><span>Moderate</span><span>Heavy</span></div>
-<nav class="mode-switch" aria-label="Map layer">
-<button id="observed" class="active" aria-pressed="true"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9M12 7a5 5 0 1 0 5 5M12 12l8-8"/><circle cx="12" cy="12" r="1.5"/></svg>Radar</button>
-<button id="forecast" aria-pressed="false"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 14a4 4 0 0 1 0-8 5.5 5.5 0 0 1 10.5 1.5A3.5 3.5 0 0 1 18 14ZM8 17l-1 3m6-3-1 3m6-3-1 3"/></svg>Forecast</button>
-</nav>
 <div id="credits-notice" hidden><a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap contributors</a> · <a href="https://openmaptiles.org/" target="_blank" rel="noopener">© OpenMapTiles</a></div>
 <div id="notice" class="notice" role="status">Loading observed radar…</div>
 <div class="map-tools" aria-label="Map controls">
@@ -58,13 +55,13 @@ button,input{font:inherit}button{cursor:pointer;-webkit-tap-highlight-color:tran
 <div class="source-tools"><div id="model-chip">RADAR<small>RainViewer</small></div></div>
 <section id="source-panel" hidden aria-labelledby="source-title"><button id="source-close" aria-label="Close map details">×</button><h2 id="source-title">Map information &amp; credits</h2><div id="availability" role="status">Checking weather data…</div>
 <p><a href="https://www.rainviewer.com/" target="_blank" rel="noopener">RainViewer</a> supplies recent observed radar. Coverage varies.</p>
-<p><a href="https://www.ncei.noaa.gov/products/weather-climate-models/global-forecast" target="_blank" rel="noopener">NOAA GFS</a> supplies the hourly precipitation forecast, up to 24 hours ahead. Its grid is approximately 28 km; smooth blending adds no spatial detail.</p>
-<p>Forecast coverage: eastern Caribbean, 10–23°N and 68–55°W. Forecast rain rates use mm/h. Radar colours use RainViewer’s scale.</p><p id="model-run"></p><p id="basemap-status"></p><p>Map data: <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap contributors</a> · <a href="https://openmaptiles.org/" target="_blank" rel="noopener">© OpenMapTiles</a>. Map service: <a href="https://openfreemap.org/" target="_blank" rel="noopener">OpenFreeMap</a>. Terrain shading: Esri, USGS, NOAA.</p>
+<p><a href="https://www.ncei.noaa.gov/products/weather-climate-models/global-forecast" target="_blank" rel="noopener">NOAA GFS</a> supplies the hourly precipitation forecast, up to 48 hours ahead. Its grid is approximately 28 km; smooth blending adds no spatial detail.</p>
+<p>Forecast coverage: eastern Caribbean, 10–23°N and 68–55°W. Forecast rain rates use mm/h. The timeline moves from observed radar into model forecasts; the label and legend identify each source.</p><p id="model-run"></p><p id="basemap-status"></p><p>Map data: <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap contributors</a> · <a href="https://openmaptiles.org/" target="_blank" rel="noopener">© OpenMapTiles</a>. Map service: <a href="https://openfreemap.org/" target="_blank" rel="noopener">OpenFreeMap</a>. Terrain shading: Esri, USGS, NOAA.</p>
 </section>
 <footer id="player" aria-label="Animation controls"><div class="player-row">
 <button id="play" aria-label="Play animation" disabled><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 4 14 8-14 8Z" fill="currentColor" stroke="none"/></svg></button><div class="time-block"><div id="clock">Loading radar</div><div id="detail">Observed rain</div></div>
-<button id="jump-latest" aria-label="Go to latest radar frame" disabled><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 5 10 7-10 7ZM19 5v14"/></svg></button>
-</div><div class="scrubber"><input id="timeline" type="range" min="0" max="1" step="1" value="0" aria-label="Weather map time" disabled></div>
+<button id="jump-latest" aria-label="Go to now" disabled><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 5 10 7-10 7ZM19 5v14"/></svg></button>
+</div><div class="scrubber"><span id="now-marker" hidden aria-label="Now"></span><input id="timeline" type="range" min="0" max="1" step="1" value="0" aria-label="Weather map time" disabled></div>
 <div class="timeline-labels"><span id="start">Recent observations</span><span class="zone">Antigua time</span><span id="end">Latest</span></div></footer>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
@@ -99,19 +96,29 @@ L.circleMarker([config.lat,config.lon],{pane:'markerPane',radius:8,color:'#fff',
 const $=id=>document.getElementById(id);
 const timeFormatter=new Intl.DateTimeFormat('en-US',{timeZone:'America/Antigua',weekday:'short',hour:'numeric',minute:'2-digit'});
 const format=t=>timeFormatter.format(new Date(t*1000));
-let observed=[],forecast=[],active=[],selection='observed',playing=false,position=0,lastTick=0,holdUntil=0,loading=false,revision=0;
+let observed=[],forecast=[],active=[],radarFrames=[],predictionFrames=[],playing=false,position=0,lastTick=0,holdUntil=0,holdAction='',loading=false,revision=0;
+let timelineStart=0,timelineEnd=0,firstPlay=true;
 let forecastMeta=null,forecastRetry=null,visibleLayers=new Set();
 let lastLegendKind='',lastDetail='',mapStatus='LOADING';
 function setMapStatus(value){mapStatus=value;map.getContainer().dataset.status=value;}
 const loaded=new Map(),pending=new Map();
-const key=f=>f.kind+':'+f.time;
+const key=f=>f.kind+':'+f.time+':'+f.url;
 const radarTileSize=window.devicePixelRatio>=2?512:256;
 window.seapointToggleInfo=()=>showInfo($('source-panel').hidden);
 window.seapointUseNativeInfo=()=>{$('info-toggle').hidden=true;};
 function notify(){if(window.SeaPointRadar)window.SeaPointRadar.postMessage('ready');}
 notify();
 function announce(message){$('availability').textContent=message;}
-function setPlaying(value){playing=value;lastTick=0;holdUntil=0;if(value&&selection==='observed'&&active.length&&position>=active.at(-1).time){position=active[0].time;render();}$('play').innerHTML=value?'<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4v16m8-16v16" stroke-width="4"/></svg>':'<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 4 14 8-14 8Z" fill="currentColor" stroke="none"/></svg>';$('play').setAttribute('aria-label',value?'Pause animation':'Play animation');}
+function observationEnd(){return radarFrames.length?radarFrames.at(-1).time:-Infinity;}
+function setPlaying(value){
+ playing=value;lastTick=0;holdUntil=0;holdAction='';
+ if(value&&active.length){
+  if(firstPlay&&radarFrames.length||position>=timelineEnd){position=timelineStart;render();}
+  firstPlay=false;
+ }
+ $('play').innerHTML=value?'<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 4v16m8-16v16" stroke-width="4"/></svg>':'<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 4 14 8-14 8Z" fill="currentColor" stroke="none"/></svg>';
+ $('play').setAttribute('aria-label',value?'Pause animation':'Play animation');
+}
 function frameLayer(frame){
  const id=key(frame);if(loaded.has(id))return Promise.resolve(loaded.get(id));if(pending.has(id))return pending.get(id);
  const task=new Promise((resolve,reject)=>{
@@ -139,73 +146,99 @@ function legend(kind){
  $('model-chip').innerHTML=kind==='forecast'?'GFS<small>28 km model</small>':'RADAR<small>RainViewer</small>';
 }
 function render(){
- if(!active.length)return;
- const index=active.findIndex(f=>f.time>=position);
- const high=index<0?active.length-1:index,low=Math.max(0,high-1);
- const a=active[low],b=active[high];
+ if(!active.length)return false;
+ const kind=radarFrames.length&&position<=observationEnd()?'observed':'forecast';
+ const pool=kind==='observed'?radarFrames:predictionFrames;
+ $('timeline').value=String(Math.round(position));$('clock').textContent=format(position);
+ if(!pool.length||position<pool[0].time||position>pool.at(-1).time){
+  for(const layer of visibleLayers)layer.setOpacity(0);visibleLayers.clear();
+  setMapStatus('GAP');$('detail').textContent='No weather frame for this time';lastDetail='';
+  $('notice').textContent='No frame available at the selected time';$('notice').hidden=false;return true;
+ }
+ const index=pool.findIndex(f=>f.time>=position);
+ const high=index<0?pool.length-1:index,low=Math.max(0,high-1);
+ const a=pool[low],b=pool[high];
  const blend=b.time>a.time?Math.max(0,Math.min(1,(position-a.time)/(b.time-a.time))):1;
- const shown=blend<0.5?a:b;
+ const shown=blend<.5?a:b;
  const first=loaded.get(key(a)),second=loaded.get(key(b));
  if(!first||!second){$('notice').textContent='Buffering weather frames…';$('notice').hidden=false;return false;}
  const next=new Set([first,second]);for(const layer of visibleLayers)if(!next.has(layer))layer.setOpacity(0);
- if(first===second){first.setOpacity(.78);}else if(a.kind!==b.kind){first.setOpacity(blend<.5?.78:0);second.setOpacity(blend<.5?0:.78);}else{first.setOpacity(.78*(1-blend));second.setOpacity(.78*blend);}
- visibleLayers=next;
- $('timeline').value=String(Math.round(position));
- $('clock').textContent=format(position);
- setMapStatus(shown.kind==='forecast'?'FORECAST':'OBSERVED');
- const detail=shown.kind==='forecast'?'Forecast rain · hourly model':'Observed radar · '+format(shown.time);
+ if(first===second)first.setOpacity(.78);
+ else{first.setOpacity(.78*(1-blend));second.setOpacity(.78*blend);}
+ visibleLayers=next;setMapStatus(kind==='forecast'?'FORECAST':'OBSERVED');
+ const detail=kind==='forecast'?'Forecast rain · hourly model':'Observed radar · '+format(shown.time);
  if(detail!==lastDetail){$('detail').textContent=detail;lastDetail=detail;}
- legend(shown.kind);
- const outside=shown.kind==='forecast'&&!L.latLngBounds(forecastMeta.bounds).intersects(map.getBounds());
+ legend(kind);
+ const outside=kind==='forecast'&&!L.latLngBounds(forecastMeta.bounds).intersects(map.getBounds());
  $('notice').hidden=!outside;if(outside)$('notice').textContent='Outside the eastern Caribbean forecast coverage';
  return true;
 }
+function updateNowMarker(){
+ const fraction=(Date.now()/1000-timelineStart)/(timelineEnd-timelineStart);
+ $('now-marker').hidden=!Number.isFinite(fraction)||fraction<0||fraction>1;
+ if(!$('now-marker').hidden)$('now-marker').style.left=(fraction*100)+'%';
+}
 async function activate(){
- const token=++revision;setPlaying(false);cleanLayers();
- legend(selection);
- active=(selection==='observed'?observed:forecast).slice().sort((a,b)=>a.time-b.time);
- for(const layer of visibleLayers)layer.setOpacity(0);visibleLayers.clear();
- setMapStatus('LOADING');
- $('jump-latest').disabled=true;
- $('play').disabled=$('timeline').disabled=true;
- if(!active.length){for(const layer of visibleLayers)layer.setOpacity(0);visibleLayers.clear();setMapStatus('UNAVAILABLE');$('clock').textContent='No frames available';$('detail').textContent='';$('notice').textContent=selection==='forecast'?'Forecast is preparing or temporarily unavailable':'Weather frames temporarily unavailable';$('notice').hidden=false;return;}
- $('notice').textContent='Preparing smooth playback…';$('notice').hidden=false;
+ const token=++revision;
+ const candidatesObserved=observed.slice().sort((a,b)=>a.time-b.time);
+ const candidatesForecast=forecast.slice().sort((a,b)=>a.time-b.time);
+ const all=[...candidatesObserved,...candidatesForecast];
+ if(!all.length){
+  if(active.length)return; // A transient metadata failure must not erase usable images.
+  setMapStatus('UNAVAILABLE');$('clock').textContent='No frames available';$('detail').textContent='';
+  $('notice').textContent='Weather frames temporarily unavailable';$('notice').hidden=false;
+  $('play').disabled=$('timeline').disabled=$('jump-latest').disabled=true;return;
+ }
+ if(!active.length){$('notice').textContent='Preparing weather playback…';$('notice').hidden=false;}
  const results=[];
- // Limit concurrent image requests on phones; preload before enabling playback.
- for(let i=0;i<active.length;i+=4){
-  results.push(...await Promise.allSettled(active.slice(i,i+4).map(frameLayer)));
+ for(let i=0;i<all.length;i+=4){
+  results.push(...await Promise.allSettled(all.slice(i,i+4).map(frameLayer)));
   if(token!==revision)return;
  }
- const failed=results.some(r=>r.status==='rejected');
- // Do not bridge an unavailable hour with a misleading continuous forecast.
- const badKinds=new Set(active.filter((f,i)=>results[i].status==='rejected').map(f=>f.kind));
- active=active.filter(f=>!badKinds.has(f.kind));
- if(!active.length){$('notice').textContent='Weather images unavailable. Retry shortly.';$('clock').textContent='Playback unavailable';setMapStatus('UNAVAILABLE');return;}
- if(failed)announce('One image source is unavailable; showing the available source only.');
- position=selection==='observed'?active.at(-1).time:Math.min(active.at(-1).time,Math.max(Date.now()/1000,active[0].time));
- $('timeline').min=String(active[0].time);$('timeline').max=String(active.at(-1).time);
- $('start').textContent=format(active[0].time);$('end').textContent=format(active.at(-1).time);
- $('timeline').disabled=false;$('play').disabled=active.length<2;$('jump-latest').disabled=false;
- $('jump-latest').setAttribute('aria-label',selection==='observed'?'Go to latest radar frame':'Go to forecast start');
- lastDetail='';render();
+ const failedKinds=new Set(all.filter((f,i)=>results[i].status==='rejected').map(f=>f.kind));
+ const readyObserved=failedKinds.has('observed')?[]:candidatesObserved;
+ const readyForecast=failedKinds.has('forecast')?[]:candidatesForecast;
+ const cutoff=readyObserved.length?readyObserved.at(-1).time:-Infinity;
+ const combined=[...readyObserved,...readyForecast.filter(f=>f.time>cutoff)].sort((a,b)=>a.time-b.time);
+ if(!combined.length){
+  if(active.length){announce('Weather update unavailable; retaining loaded images.');return;}
+  setMapStatus('UNAVAILABLE');$('clock').textContent='Playback unavailable';$('notice').textContent='Weather images unavailable. Retry shortly.';$('notice').hidden=false;return;
+ }
+ const hadFrames=active.length>0;
+ radarFrames=readyObserved;predictionFrames=readyForecast;active=combined;
+ timelineStart=radarFrames.length?radarFrames[0].time:Math.max(Date.now()/1000,predictionFrames[0].time);
+ timelineEnd=predictionFrames.length?Math.min(forecastMeta.forecast_until||Date.now()/1000+48*3600,predictionFrames.at(-1).time):observationEnd();
+ if(timelineEnd<timelineStart)timelineEnd=timelineStart;
+ if(!hadFrames||(firstPlay&&radarFrames.length&&!playing))position=radarFrames.length?observationEnd():timelineStart;
+ position=Math.min(timelineEnd,Math.max(timelineStart,position));
+ $('timeline').min=String(Math.floor(timelineStart));$('timeline').max=String(Math.floor(timelineEnd));
+ $('start').textContent=format(timelineStart);$('end').textContent=format(timelineEnd);
+ $('timeline').disabled=timelineEnd<=timelineStart;$('play').disabled=timelineEnd<=timelineStart;$('jump-latest').disabled=false;
+ $('jump-latest').setAttribute('aria-label','Go to now');
+ updateNowMarker();cleanLayers();lastDetail='';render();
+ if(failedKinds.size)announce('One weather source is unavailable; showing the available coverage.');
 }
-for(const mode of ['observed','forecast'])$(mode).onclick=()=>{
- selection=mode;for(const id of ['observed','forecast']){$(id).classList.toggle('active',id===mode);$(id).setAttribute('aria-pressed',String(id===mode));}activate();
-};
 $('play').onclick=()=>setPlaying(!playing);
-$('timeline').oninput=()=>{setPlaying(false);position=Number($('timeline').value);render();};
+$('timeline').oninput=()=>{setPlaying(false);firstPlay=false;position=Number($('timeline').value);render();};
 function tick(ms){
  if(playing&&active.length>1){
   if(lastTick){
    if(holdUntil){
-    if(ms>=holdUntil){holdUntil=0;position=active[0].time;render();}
+    if(ms>=holdUntil){
+     position=holdAction==='forecast'?Math.max(observationEnd()+1,predictionFrames[0].time):timelineStart;
+     holdUntil=0;holdAction='';render();
+    }
    }else{
-    // A ten-minute radar interval now takes two seconds, six times slower.
-    const rate=selection==='observed'?300:1800;
+    const inObserved=radarFrames.length&&position<=observationEnd();
+    const rate=inObserved?300:1800;
     const candidate=position+Math.min(ms-lastTick,100)*rate/1000;
-    const old=position;position=Math.min(candidate,active.at(-1).time);
-    if(render()===false)position=old;
-    else if(candidate>=active.at(-1).time)holdUntil=ms+(selection==='observed'?2500:1500);
+    const old=position;
+    if(inObserved&&predictionFrames.length&&timelineEnd>observationEnd()&&candidate>observationEnd()){
+     position=observationEnd();holdAction='forecast';holdUntil=ms+2500;
+    }else if(candidate>=timelineEnd){
+     position=timelineEnd;holdAction='loop';holdUntil=ms+(inObserved?2500:1500);
+    }else position=candidate;
+    if(render()===false){position=old;holdUntil=0;holdAction='';}
    }
   }
   lastTick=ms;
@@ -220,29 +253,29 @@ async function loadObserved(){
   const now=Date.now()/1000;
   observed=(data.frames||[]).filter(f=>Number.isFinite(f.time)&&f.path&&f.time<=now+60&&f.time>=now-3*3600).slice(-8).map(f=>({kind:'observed',time:f.time,url:(data.host||'https://tilecache.rainviewer.com')+f.path+'/'+radarTileSize+'/{z}/{x}/{y}/2/1_1.png'}));
  }catch(_){observed=[];announce('Observed radar unavailable; forecast may still be available.');}
- if(selection==='observed'&&(previous!==observed.map(key).join(',')||!active.length))await activate();
+ if(previous!==observed.map(key).join(',')||!radarFrames.length)await activate();
 }
 async function loadForecast(){
  if(loading)return;loading=true;
  try{
   const response=await fetch('/forecast-frames');const data=await response.json();
-  if(response.status===202){announce('Preparing the 24-hour forecast. Radar remains available.');clearTimeout(forecastRetry);forecastRetry=setTimeout(loadForecast,15000);return;}
+  if(response.status===202){announce('Preparing the 48-hour forecast. Radar remains available.');clearTimeout(forecastRetry);forecastRetry=setTimeout(loadForecast,15000);return;}
   if(!response.ok||data.status!=='ready')throw new Error();
   forecastMeta=data;const now=Date.now()/1000;
-  const upcoming=(data.frames||[]).filter(f=>Number.isFinite(f.time)&&f.url&&f.time>=now-3600&&f.time<=now+24*3600).map(f=>({...f,kind:'forecast'}));
+  const upcoming=(data.frames||[]).filter(f=>Number.isFinite(f.time)&&f.url&&f.time>=now-3600&&f.time<=Math.ceil(now/3600)*3600+48*3600).map(f=>({...f,kind:'forecast'}));
   if(upcoming.length<2)throw new Error();
   const changed=upcoming.map(key).join(',')!==forecast.map(key).join(',');forecast=upcoming;
   announce('Forecast available through '+format(forecast.at(-1).time)+' · hourly data, smoothly blended.');
   $('model-run').textContent='Forecast model run: '+format(data.model_run)+' Antigua time.';
-  if(selection==='forecast'&&(changed||!active.length))await activate();
+  if(changed||!predictionFrames.length)await activate();
  }catch(_){announce(forecast.length?'Forecast update unavailable; retaining cached forecast through '+format(forecast.at(-1).time):'Forecast temporarily unavailable. Observed radar remains available.');}
  finally{loading=false;}
 }
-loadObserved();loadForecast();setInterval(loadObserved,300000);setInterval(loadForecast,900000);
+loadObserved();loadForecast();setInterval(loadObserved,300000);setInterval(loadForecast,900000);setInterval(updateNowMarker,60000);
 map.on('movestart',()=>setPlaying(false));
 $('zoom-in').onclick=()=>map.zoomIn();$('zoom-out').onclick=()=>map.zoomOut();
 $('recenter').onclick=()=>map.setView([config.lat,config.lon],10.5);
-$('jump-latest').onclick=()=>{if(!active.length)return;setPlaying(false);position=selection==='observed'?active.at(-1).time:Math.min(active.at(-1).time,Math.max(Date.now()/1000,active[0].time));render();};
+$('jump-latest').onclick=()=>{if(!active.length)return;setPlaying(false);firstPlay=false;position=radarFrames.length?observationEnd():Math.min(timelineEnd,Math.max(Date.now()/1000,timelineStart));render();};
 function showInfo(show){dismissCredits();$('source-panel').hidden=!show;$('info-toggle').setAttribute('aria-expanded',String(show));if(show)$('source-close').focus();else $('info-toggle').focus();}
 $('info-toggle').onclick=()=>showInfo($('source-panel').hidden);
 $('source-close').onclick=()=>showInfo(false);
