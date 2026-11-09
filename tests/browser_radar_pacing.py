@@ -79,9 +79,9 @@ with sync_playwright() as playwright:
     page.wait_for_timeout(3000)
     after = int(page.locator('#timeline').input_value())
     advancement = after - before
-    assert 600 <= advancement <= 1100, advancement
+    assert 900 <= advancement <= 1250, advancement
     print('PASS 3 seconds of radar playback advances', advancement,
-          'timeline seconds (expected about 900)', flush=True)
+          'timeline seconds (expected about 1080)', flush=True)
 
     page.locator('#play').click()
     frozen = page.locator('#timeline').input_value()
