@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from pathlib import Path
 import tempfile
+import math
 import unittest
 from unittest.mock import patch
 
@@ -34,23 +35,51 @@ class ForecastTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             precipitation_range('1:0:x:PRATE:surface:6-12 hour ave fcst:\n2:50:x:END:\n')
 
-    def test_forecast_contains_real_timestamps_and_24_future_hours(self):
+    def test_forecast_contains_real_timestamps_and_48_future_hours(self):
         service = self.service()
         service._build(self.cycle)
         result = service.snapshot()
         self.assertEqual(result['status'], 'ready')
         self.assertEqual(result['units'], 'mm/h')
-        self.assertGreaterEqual(result['frames'][-1]['time'], self.now + 86400)
+        self.assertEqual(result['forecast_until'], int(self.now + 48 * 3600))
+        self.assertEqual(result['horizon_hours'], 48)
+        self.assertGreaterEqual(result['frames'][-1]['time'], self.now + 48 * 3600)
         self.assertTrue(all(b['time'] - a['time'] == 3600
                             for a, b in zip(result['frames'], result['frames'][1:])))
-        self.assertEqual(len(self.reads), 52)
+        self.assertEqual(len(self.reads), 100)
         self.assertEqual(service.image(result['frames'][0]['url'].split('/')[-1]), b'PNG-fixture')
+
+    def test_build_brackets_48_hours_between_hourly_timestamps(self):
+        self.now += 23 * 60
+        service = self.service()
+        service._build(self.cycle)
+        self.assertGreater(service.manifest['frames'][-1]['time'], self.now + 48 * 3600)
+        result = service.snapshot()
+        self.assertGreaterEqual(result['frames'][-1]['time'], self.now + 48 * 3600)
+        self.assertLessEqual(result['frames'][-1]['time'], math.ceil((self.now + 48 * 3600) / 3600) * 3600)
+        self.assertEqual(result['forecast_until'], int(self.now + 48 * 3600))
+        self.assertEqual(len(self.reads), 100)
 
     def test_cached_images_avoid_more_provider_requests(self):
         service = self.service()
         service._build(self.cycle)
         service._build(self.cycle)
-        self.assertEqual(len(self.reads), 52)
+        self.assertEqual(len(self.reads), 100)
+
+    def test_hourly_extension_reuses_all_but_one_cached_frame(self):
+        self.now = datetime(2026, 11, 8, 20, 23, tzinfo=timezone.utc).timestamp()
+        service = self.service()
+        service._build(self.cycle)
+        self.assertEqual(len(self.reads), 100)
+        with patch('forecast_maps.threading.Thread') as worker:
+            service.snapshot()
+            worker.assert_not_called()
+            self.now += 3600
+            service.snapshot()
+            worker.assert_called_once()
+        service._build(self.cycle)
+        self.assertEqual(len(self.reads), 102)
+        self.assertGreaterEqual(service.snapshot()['frames'][-1]['time'], self.now + 48 * 3600)
 
     def test_failed_refresh_keeps_valid_forecast_and_backs_off(self):
         service = self.service()

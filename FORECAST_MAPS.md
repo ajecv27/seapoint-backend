@@ -1,24 +1,23 @@
-# Radar and 24-hour forecast playback
+# Radar and 48-hour forecast playback
 
 SeaPoint's existing `/radar` WebView now loads a player with observed RainViewer
 radar, a NOAA GFS precipitation forecast, play/pause, a draggable time slider,
 and smooth blending between hourly forecast images. No Android app replacement
 is needed: the existing RadarScreen already loads this backend page.
 
-The player offers Radar and Forecast modes, defaulting to Radar's latest image.
-A green land / blue water vector map with subtle terrain shading has a compact intensity legend, floating layer and
-map controls, and a dark bottom playback panel. Source details are available
+The player is one Radar view with a continuous recent-observation-to-48-hour-forecast timeline. It opens on the latest observation; the first Play starts from the earliest recent radar frame and continues into predictions.
+A green land / blue water vector map with subtle terrain shading has a compact intensity legend, floating map controls, and a dark bottom playback panel. Source details are available
 through the info button. Observations and forecasts have explicit labels and
 separate legends. Radar playback advances a ten-minute image interval over two
-seconds, then holds the latest image for 2.5 seconds before looping. Forecast
-playback retains its existing speed, with a brief hold at the end. Interpolation smooths
+seconds, then holds the latest observation for 2.5 seconds before continuing into
+forecasts. Only the end of the 48-hour forecast loops back to the beginning. Interpolation smooths
 images only; it is not additional weather data or a radar nowcast. RainViewer
 coverage can be incomplete. Missing images are never described as dry weather.
 
 ## Forecast data
 
 - Public NOAA GFS 0.25-degree instantaneous surface precipitation rate (PRATE).
-- Hourly frames covering approximately the next 24 hours; actual times appear
+- Hourly frames covering approximately the next 48 hours; actual times appear
   at both ends of the slider. Model runs update six-hourly with publication time
   allowed. Units are converted from kg/m²/s to mm/hour by multiplying by 3600.
 - Regional overlay: 10–23°N, 68–55°W, covering Antigua/Barbuda and the eastern
@@ -41,7 +40,7 @@ ecCodes; no NOAA or OpenWeather key is needed for the forecast maps.
 
 The forecast is prepared in a background thread on the first request. During
 preparation `/forecast-frames` returns HTTP 202; the player keeps radar available
-and checks again after 15 seconds. The first build downloads/decompresses 26
+and checks again after 15 seconds. The first build downloads/decompresses 50
 precipitation records and can take longer on a small Render instance. Frames are
 reused from disk, and failed updates back off for five minutes. A prior forecast
 is retained only while its model run is less than 24 hours old.
@@ -110,3 +109,17 @@ widget. It checks both expected insertion points before writing and creates a
 backup. Rebuild/run the Flutter app afterward. The app title-bar icon calls the
 same web info panel and hides its fallback web button. Until the app is rebuilt,
 the top-of-map info button remains available.
+
+## Unified past-to-future timeline
+
+The selector is removed. Observation frames form the history; the previous-hour
+GFS image is retained only for interpolation, never interleaved with observations.
+The source label and intensity legend change when predictions begin. A Now marker
+and the trailing Go to now action help return to current conditions. Observation
+and prediction images are never crossfaded into one another; a source gap is
+shown explicitly as unavailable rather than clear weather.
+
+The backend returns an hourly image bracketing the exact `forecast_until` time
+(now plus 48 hours), and the slider ends at that timestamp. Fifty cached hourly
+images support this horizon. Extensions reuse images and fetch only new records.
+The existing Android WebView loads this change without another app rebuild.

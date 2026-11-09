@@ -17,6 +17,7 @@ UTC = timezone.utc
 BOUNDS = [[10.0, -68.0], [23.0, -55.0]]
 HOST = 'https://noaa-gfs-bdp-pds.s3.amazonaws.com'
 LOG = logging.getLogger(__name__)
+HORIZON_HOURS = 48
 
 
 def read_url(url, byte_range=None):
@@ -117,17 +118,20 @@ class ForecastMaps:
         cycle = datetime.fromtimestamp(now - 5 * 3600, UTC)
         cycle = cycle.replace(hour=cycle.hour // 6 * 6, minute=0, second=0, microsecond=0)
         generation = cycle.strftime('%Y%m%d%H')
+        required_end = math.ceil(now / 3600) * 3600 + HORIZON_HOURS * 3600
         with self.lock:
             manifest = self.manifest
             refresh = (self.generation != generation or not manifest or
-                       manifest['frames'][-1]['time'] < now + 23 * 3600)
+                       manifest['frames'][-1]['time'] < required_end)
             if refresh and not self.building and now >= self.retry_after:
                 self.building = True
                 threading.Thread(target=self._build, args=(cycle,), daemon=True).start()
             if manifest and now - manifest['model_run'] < 24 * 3600:
-                frames = [f for f in manifest['frames'] if now - 3600 <= f['time'] <= now + 24 * 3600]
+                frames = [f for f in manifest['frames'] if now - 3600 <= f['time'] <= required_end]
                 if frames:
-                    return dict(manifest, frames=frames, status='ready', updating=self.building)
+                    return dict(manifest, frames=frames, status='ready', updating=self.building,
+                                forecast_until=int(now + HORIZON_HOURS * 3600),
+                                horizon_hours=HORIZON_HOURS)
             return dict(status='loading' if self.building else 'unavailable', frames=[],
                         bounds=BOUNDS, source='NOAA GFS', retry_seconds=15)
 
@@ -137,7 +141,9 @@ class ForecastMaps:
             now = self.clock()
             first = max(1, int((now - cycle.timestamp()) // 3600))
             frames = []
-            for hour in range(first, first + 26):
+            # Include the current hour, the full horizon, and a final bracketing
+            # hour so a request between whole hours still has future coverage.
+            for hour in range(first, first + HORIZON_HOURS + 2):
                 stamp = int((cycle + timedelta(hours=hour)).timestamp())
                 name = f"{cycle:%Y%m%d%H}-{hour:03d}.png"
                 path = self.directory / name

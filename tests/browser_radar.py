@@ -72,7 +72,7 @@ def check_layout(page):
     info_box = page.locator('#info-toggle').bounding_box()
     assert info_box and info_box['y'] < 100, info_box
     assert legend_box and legend_box['y'] + legend_box['height'] < player_box['y'], legend_box
-    for selector in ['#play', '#recenter', '#info-toggle', '#observed', '#forecast']:
+    for selector in ['#play', '#recenter', '#info-toggle']:
         box = page.locator(selector).bounding_box()
         assert box and box['width'] >= 44 and box['height'] >= 44, (selector, box)
     timeline_box = page.locator('#timeline').bounding_box()
@@ -109,8 +109,9 @@ with sync_playwright() as playwright:
     page.wait_for_function('window.__creditsSeen === true', timeout=15000)
     page.wait_for_function("document.getElementById('credits-notice').hidden", timeout=15000)
     assert 'Past + forecast' not in page.locator('body').inner_text()
-    assert page.locator('#observed').get_attribute('aria-pressed') == 'true'
-    assert page.locator('#forecast').get_attribute('aria-pressed') == 'false'
+    assert page.locator('#observed').count() == 0
+    assert page.locator('#forecast').count() == 0
+    assert page.locator('.mode-switch').count() == 0
     assert page.locator('#source-panel').is_hidden()
     page.locator('#info-toggle').click()
     assert page.locator('#source-panel').is_visible()
@@ -122,10 +123,9 @@ with sync_playwright() as playwright:
     page.locator('#recenter').click()
     check_layout(page)
 
-    page.locator('#forecast').click()
-    assert page.locator('#forecast').get_attribute('aria-pressed') == 'true'
-    assert page.locator('#observed').get_attribute('aria-pressed') == 'false'
-    page.wait_for_function("!document.getElementById('timeline').disabled", timeout=120000)
+    page.wait_for_function("predictionFrames.length>=48 && timelineEnd>Date.now()/1000+47.9*3600", timeout=180000)
+    page.locator('#timeline').evaluate(
+        "e=>{e.value=Date.now()/1000+3600;e.dispatchEvent(new Event('input',{bubbles:true}));}")
     assert page.evaluate('mapStatus') == 'FORECAST'
     assert page.evaluate("""() => {
         let markerPane, imagePane;
@@ -166,18 +166,16 @@ with sync_playwright() as playwright:
     assert page.locator('#source-panel').is_visible()
     page.evaluate('window.seapointToggleInfo()')
     assert page.locator('#source-panel').is_hidden()
-    print('PASS clean two-mode map, top info/credits, lower timeline, portrait/landscape, playback, pause, scrubbing')
+    print('PASS unified 48h radar, top info/credits, lower timeline, portrait/landscape, playback, pause, scrubbing')
 
-    # Default Radar remains explicit; users can select Forecast during a radar outage.
+    # A radar outage leaves the same unified timeline usable for predictions.
     other = browser.new_page(viewport={'width': 390, 'height': 844})
     attach(other)
     other.route('**/radar-frames', lambda route: route.fulfill(status=503, json={'error': 'test outage'}))
     open_map(other)
-    other.locator('#forecast').click()
-    assert other.locator('#forecast').get_attribute('aria-pressed') == 'true'
-    other.wait_for_function("!document.getElementById('timeline').disabled", timeout=90000)
+    other.wait_for_function("!document.getElementById('timeline').disabled && predictionFrames.length>=48", timeout=120000)
     assert other.evaluate('mapStatus') == 'FORECAST'
-    print('PASS observation outage leaves selected forecast usable')
+    print('PASS observation outage leaves unified forecast timeline usable')
     other.close()
 
     failed = browser.new_page(viewport={'width': 390, 'height': 844})
@@ -190,11 +188,7 @@ with sync_playwright() as playwright:
     assert failed.locator('#timeline').is_disabled()
     assert failed.locator('#play').is_disabled()
     assert failed.locator('#clock').inner_text() == 'No frames available'
-    failed.locator('#forecast').click()
-    failed.wait_for_function("mapStatus==='UNAVAILABLE'", timeout=30000)
-    assert failed.locator('#timeline').is_disabled()
-    assert failed.locator('#play').is_disabled()
-    print('PASS combined outage disables both modes and shows unavailable, not dry')
+    print('PASS combined outage disables timeline and shows unavailable, not dry')
     failed.close()
     print('PAGE ERRORS', errors)
     assert not errors
