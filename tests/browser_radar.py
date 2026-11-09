@@ -67,6 +67,10 @@ def check_layout(page):
     assert player_box['x'] + player_box['width'] <= viewport['width'] + 1, player_box
     assert player_box['y'] + player_box['height'] <= viewport['height'] + 1, player_box
     assert player_box['y'] > viewport['height'] / 2, player_box
+    bottom_gap = viewport['height'] - player_box['y'] - player_box['height']
+    assert 0 <= bottom_gap <= 12, (bottom_gap, player_box)
+    info_box = page.locator('#info-toggle').bounding_box()
+    assert info_box and info_box['y'] < 100, info_box
     assert legend_box and legend_box['y'] + legend_box['height'] < player_box['y'], legend_box
     for selector in ['#play', '#recenter', '#info-toggle', '#observed', '#forecast']:
         box = page.locator(selector).bounding_box()
@@ -81,18 +85,39 @@ with sync_playwright() as playwright:
         headless=True, args=['--no-sandbox', '--enable-unsafe-swiftshader'])
     page = browser.new_page(viewport={'width': 390, 'height': 844}, device_scale_factor=1)
     attach(page)
+    # Record startup attribution even when tile loading lasts longer than its
+    # five-second display. Disconnect after one actual visible presentation.
+    page.add_init_script('''(() => {
+        window.__creditsSeen = false;
+        const observer = new MutationObserver(() => {
+            const notice = document.getElementById('credits-notice');
+            if (notice && !notice.hidden && getComputedStyle(notice).display !== 'none') {
+                window.__creditsSeen = true;
+                observer.disconnect();
+            }
+        });
+        observer.observe(document, {subtree:true, childList:true, attributes:true});
+    })()''')
     open_map(page)
     page.wait_for_function("flatBasemap && flatBasemap.getMaplibreMap().isStyleLoaded()", timeout=90000)
     assert page.evaluate("flatBasemap.getMaplibreMap().getStyle().layers.find(l=>l.id==='background').paint['background-color'] === '#4d8958'")
     assert page.evaluate("!flatBasemap.getMaplibreMap().getStyle().layers.some(l=>l.type==='raster'||l.type==='fill-extrusion')")
     assert page.locator('#all').count() == 0
+    assert page.locator('.location-pill').count() == 0
+    assert page.locator('#mode').count() == 0
+    assert page.locator('.leaflet-control-attribution').count() == 0
+    page.wait_for_function('window.__creditsSeen === true', timeout=15000)
+    page.wait_for_function("document.getElementById('credits-notice').hidden", timeout=15000)
     assert 'Past + forecast' not in page.locator('body').inner_text()
     assert page.locator('#observed').get_attribute('aria-pressed') == 'true'
     assert page.locator('#forecast').get_attribute('aria-pressed') == 'false'
     assert page.locator('#source-panel').is_hidden()
     page.locator('#info-toggle').click()
     assert page.locator('#source-panel').is_visible()
-    page.locator('#info-toggle').click()
+    assert page.locator('#source-panel a[href="https://www.openstreetmap.org/copyright"]').is_visible()
+    assert page.locator('#source-panel a[href="https://openmaptiles.org/"]').is_visible()
+    assert page.locator('#credits-notice').is_hidden()
+    page.locator('#source-close').click()
     assert page.locator('#source-panel').is_hidden()
     page.locator('#recenter').click()
     check_layout(page)
@@ -101,7 +126,7 @@ with sync_playwright() as playwright:
     assert page.locator('#forecast').get_attribute('aria-pressed') == 'true'
     assert page.locator('#observed').get_attribute('aria-pressed') == 'false'
     page.wait_for_function("!document.getElementById('timeline').disabled", timeout=120000)
-    assert page.locator('#mode').inner_text() == 'FORECAST'
+    assert page.evaluate('mapStatus') == 'FORECAST'
     assert page.evaluate("""() => {
         let markerPane, imagePane;
         map.eachLayer(layer => {
@@ -113,7 +138,7 @@ with sync_playwright() as playwright:
     }""")
     print('STATE', json.dumps(page.evaluate(
         "({frames:active.length,first:active[0].time,last:active.at(-1).time,"
-        "mode:document.getElementById('mode').textContent,"
+        "mode:mapStatus,"
         "detail:document.getElementById('detail').textContent})")))
 
     page.locator('#play').click()
@@ -127,7 +152,7 @@ with sync_playwright() as playwright:
     assert page.locator('#timeline').input_value() == paused
     page.locator('#timeline').evaluate(
         "e=>{e.value=e.max;e.dispatchEvent(new Event('input',{bubbles:true}));}")
-    assert page.locator('#mode').inner_text() == 'FORECAST'
+    assert page.evaluate('mapStatus') == 'FORECAST'
     assert page.locator('#timeline').input_value() == page.locator('#timeline').get_attribute('max')
     check_layout(page)
     if os.environ.get('RADAR_SCREENSHOT'):
@@ -135,7 +160,13 @@ with sync_playwright() as playwright:
     page.set_viewport_size({'width': 844, 'height': 390})
     page.wait_for_timeout(300)
     check_layout(page)
-    print('PASS two modes, source details, full-map portrait/landscape layout, playback, pause, scrubbing')
+    page.evaluate('window.seapointUseNativeInfo()')
+    assert page.locator('#info-toggle').is_hidden()
+    page.evaluate('window.seapointToggleInfo()')
+    assert page.locator('#source-panel').is_visible()
+    page.evaluate('window.seapointToggleInfo()')
+    assert page.locator('#source-panel').is_hidden()
+    print('PASS clean two-mode map, top info/credits, lower timeline, portrait/landscape, playback, pause, scrubbing')
 
     # Default Radar remains explicit; users can select Forecast during a radar outage.
     other = browser.new_page(viewport={'width': 390, 'height': 844})
@@ -145,7 +176,7 @@ with sync_playwright() as playwright:
     other.locator('#forecast').click()
     assert other.locator('#forecast').get_attribute('aria-pressed') == 'true'
     other.wait_for_function("!document.getElementById('timeline').disabled", timeout=90000)
-    assert other.locator('#mode').inner_text() == 'FORECAST'
+    assert other.evaluate('mapStatus') == 'FORECAST'
     print('PASS observation outage leaves selected forecast usable')
     other.close()
 
@@ -155,12 +186,12 @@ with sync_playwright() as playwright:
     failed.route('**/forecast-frames', lambda route: route.fulfill(
         status=503, json={'status': 'unavailable', 'frames': []}))
     open_map(failed)
-    failed.wait_for_function("document.getElementById('mode').textContent==='UNAVAILABLE'", timeout=30000)
+    failed.wait_for_function("mapStatus==='UNAVAILABLE'", timeout=30000)
     assert failed.locator('#timeline').is_disabled()
     assert failed.locator('#play').is_disabled()
     assert failed.locator('#clock').inner_text() == 'No frames available'
     failed.locator('#forecast').click()
-    failed.wait_for_function("document.getElementById('mode').textContent==='UNAVAILABLE'", timeout=30000)
+    failed.wait_for_function("mapStatus==='UNAVAILABLE'", timeout=30000)
     assert failed.locator('#timeline').is_disabled()
     assert failed.locator('#play').is_disabled()
     print('PASS combined outage disables both modes and shows unavailable, not dry')

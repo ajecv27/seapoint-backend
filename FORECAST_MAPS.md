@@ -91,3 +91,22 @@ The browser needs WebGL (available on the target Samsung device). The automated
 browser checks allow Chromium's software WebGL renderer in the test environment.
 Weather overlays remain independent of the basemap, and the source details
 report a basemap loading failure rather than inventing geography.
+
+## Compact controls and app title-bar info
+
+The location pill and duplicate layer badge have been removed. The playback
+panel sits 8px above the safe area. The bottom branding strip is replaced by
+an accessible top info/credits button; required map attribution is presented
+briefly on load and then remains available in that panel.
+
+High-density screens request RainViewer's documented 512px tiles while retaining
+256px logical tiles and native zoom 7. Provider smoothing remains enabled, and
+a light blur on the radar layer softens block edges without blurring labels
+or inventing additional weather detail.
+
+To place the info icon in the native Android title bar, the small guarded
+`android-client/add-header-info.ps1` patch updates only the existing radar
+widget. It checks both expected insertion points before writing and creates a
+backup. Rebuild/run the Flutter app afterward. The app title-bar icon calls the
+same web info panel and hides its fallback web button. Until the app is rebuilt,
+the top-of-map info button remains available.

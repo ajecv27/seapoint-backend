@@ -46,7 +46,7 @@ with sync_playwright() as playwright:
     browser = playwright.chromium.launch(
         executable_path=os.environ.get('CHROMIUM_PATH', '/usr/bin/chromium'),
         headless=True, args=['--no-sandbox', '--enable-unsafe-swiftshader'])
-    page = browser.new_page(viewport={'width': 390, 'height': 844})
+    page = browser.new_page(viewport={'width': 390, 'height': 844}, device_scale_factor=3)
     errors = []
     page.on('pageerror', lambda error: errors.append(str(error)))
     page.route(re.compile(r'https://.*'), external_asset)
@@ -70,7 +70,8 @@ with sync_playwright() as playwright:
     page.goto(BASE_URL + '/radar?lat=17.12&lon=-61.8&name=Pacing%20test',
               wait_until='domcontentloaded', timeout=60000)
     page.wait_for_function("!document.getElementById('play').disabled", timeout=30000)
-    assert page.locator('#mode').inner_text() == 'OBSERVED'
+    assert page.evaluate('mapStatus') == 'OBSERVED'
+    assert page.evaluate('radarTileSize') == 512
     assert page.locator('#timeline').input_value() == str(latest)
 
     page.locator('#play').click()
