@@ -12,7 +12,7 @@ $actions = @'
             child: IconButton.filled(
               tooltip: 'Map information and credits',
               style: IconButton.styleFrom(
-                backgroundColor: const Color(0xFF1E2731),
+                backgroundColor: const Color(0xA31E2731),
                 foregroundColor: Colors.white,
               ),
               icon: const Icon(Icons.info_outline),
