@@ -36,7 +36,9 @@ button,input{font:inherit}button{cursor:pointer;-webkit-tap-highlight-color:tran
 @media(max-width:340px){#clock{font-size:15px}.timeline-labels{font-size:9px}#player{left:8px;right:8px;padding-left:10px;padding-right:10px}}
 @media(max-height:500px){#legend{height:27px;font-size:12px}.notice{top:93px;max-width:70%}.map-tools{bottom:calc(126px + var(--safe));gap:5px;right:10px}.round{height:44px;width:44px}.source-tools{bottom:calc(124px + var(--safe));left:10px}#player{bottom:calc(8px + var(--safe));padding:6px 14px;border-radius:20px;max-width:600px}#clock{font-size:16px}#detail{font-size:10px;margin-top:0}.scrubber{margin-top:0;height:30px}#timeline{height:30px}.timeline-labels{font-size:9px}#source-panel{top:94px;bottom:auto;max-height:calc(100% - 224px)}}
 
-#info-toggle{position:absolute;top:54px;right:12px;z-index:750;}
+#info-toggle{position:absolute;top:54px;right:12px;z-index:750;width:44px;height:44px;background:transparent;border:0;box-shadow:none;}
+#info-toggle::before{content:"";position:absolute;inset:5px;background:var(--panel);border:1px solid var(--line);border-radius:50%;z-index:-1;}
+#info-toggle .icon{width:18px;height:18px;}
 #credits-notice{position:absolute;top:112px;left:12px;z-index:650;max-width:calc(100% - 24px);padding:6px 9px;border-radius:10px;background:#1e2731bf;color:#c4d9e6;font-size:10px;line-height:1.5;}
 #credits-notice a{color:inherit;}
 @media(max-height:500px){#info-toggle{top:38px;}#credits-notice{top:92px;}}
@@ -230,7 +232,7 @@ function tick(ms){
     }
    }else{
     const inObserved=radarFrames.length&&position<=observationEnd();
-    const rate=inObserved?300:1800;
+    const rate=inObserved?360:2160;
     const candidate=position+Math.min(ms-lastTick,100)*rate/1000;
     const old=position;
     if(inObserved&&predictionFrames.length&&timelineEnd>observationEnd()&&candidate>observationEnd()){
@@ -272,7 +274,6 @@ async function loadForecast(){
  finally{loading=false;}
 }
 loadObserved();loadForecast();setInterval(loadObserved,300000);setInterval(loadForecast,900000);setInterval(updateNowMarker,60000);
-map.on('movestart',()=>setPlaying(false));
 $('zoom-in').onclick=()=>map.zoomIn();$('zoom-out').onclick=()=>map.zoomOut();
 $('recenter').onclick=()=>map.setView([config.lat,config.lon],10.5);
 $('jump-latest').onclick=()=>{if(!active.length)return;setPlaying(false);firstPlay=false;position=radarFrames.length?observationEnd():Math.min(timelineEnd,Math.max(Date.now()/1000,timelineStart));render();};

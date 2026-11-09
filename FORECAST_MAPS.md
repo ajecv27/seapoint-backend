@@ -123,3 +123,13 @@ The backend returns an hourly image bracketing the exact `forecast_until` time
 (now plus 48 hours), and the slider ends at that timestamp. Fifty cached hourly
 images support this horizon. Extensions reuse images and fetch only new records.
 The existing Android WebView loads this change without another app rebuild.
+
+## Playback polish
+
+Playback is 20% faster while keeping the observation and forecast pacing
+distinct (360 and 2160 timeline seconds per real second). Panning, pinch zoom,
+zoom buttons, and recentering leave playback running; manually scrubbing the
+time slider or pressing pause still stops it. The info button has a smaller
+34px visual circle and 18px icon with a 44px touch target. The Android header
+patch also supports resizing an already installed native info action, with a
+backup and guarded matching before changing the Dart file.
