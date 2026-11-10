@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 
 from pypdf import PdfReader
 from forecast_maps import ForecastMaps
+from official_alerts import OfficialAlertService, parse_marine_locations, parse_marine_cancellations
 from radar_view import radar_page
 from basemap_service import basemap_document
 
@@ -392,6 +393,7 @@ def get_timing_window(
     text,
     issue_datetime,
     applies_to_antigua,
+    target_island="Antigua",
 ):
     timing_match = re.search(
         r"Timing:\s*(.*?)(?=Synopsis:)",
@@ -408,26 +410,26 @@ def get_timing_window(
 
     lower = timing_text.lower()
 
-    antigua_index = lower.find(
-        "antigua"
+    island_index = lower.find(
+        target_island.lower()
     )
 
-    if antigua_index >= 0:
+    if island_index >= 0:
         until_index = lower.rfind(
             "until",
             0,
-            antigua_index,
+            island_index,
         )
 
         if until_index < 0:
             return None, None
 
-        descriptor_end = antigua_index
+        descriptor_end = island_index
 
         for_index = lower.find(
             " for ",
             until_index,
-            antigua_index,
+            island_index,
         )
 
         if for_index >= 0:
@@ -515,134 +517,52 @@ def get_timing_window(
 
 def check_alert(item):
     name, url = item
-
     try:
-        text = normalize_text(
-            pdf_to_text(
-                fetch(url)
-            )
-        )
-
-        (
-            issue_datetime,
-            issue_match,
-        ) = parse_issue_datetime(
-            text
-        )
-
-        if issue_datetime is None:
-            return (
-                name,
-                {
-                    "active": False,
-                    "reason":
-                        "issue_date_unreadable",
-                },
-            )
-
-        applies = (
-            bulletin_applies_to_antigua(
-                text,
-                issue_match,
-            )
-        )
-
-        if not applies:
-            return (
-                name,
-                {
-                    "active": False,
-                    "reason":
-                        "not_for_antigua",
-                },
-            )
-
-        (
-            start,
-            expiry,
-        ) = get_timing_window(
-            text,
-            issue_datetime,
-            applies,
-        )
-
-        if (
-            start is None
-            or expiry is None
-        ):
-            return (
-                name,
-                {
-                    "active": False,
-                    "reason":
-                        "timing_unreadable",
-                },
-            )
-
-        now = datetime.now(
-            ANTIGUA_TIME
-        )
-
-        if start > expiry:
-            return (
-                name,
-                {
-                    "active": False,
-                    "reason":
-                        "invalid_timing",
-                },
-            )
-
-        if now < start:
-            return (
-                name,
-                {
-                    "active": False,
-                    "reason":
-                        "not_started",
-                    "starts":
-                        start.isoformat(),
-                    "expires":
-                        expiry.isoformat(),
-                },
-            )
-
-        if now > expiry:
-            return (
-                name,
-                {
-                    "active": False,
-                    "reason":
-                        "expired",
-                    "expires":
-                        expiry.isoformat(),
-                },
-            )
-
-        return (
-            name,
-            {
-                "active": True,
-                "reason": "active",
-                "starts":
-                    start.isoformat(),
-                "expires":
-                    expiry.isoformat(),
-                "url": url,
-            },
-        )
-
-    except Exception as error:
-        return (
-            name,
-            {
-                "active": False,
-                "reason":
-                    "bulletin_error",
-                "error":
-                    str(error),
-            },
-        )
+        text = normalize_text(pdf_to_text(fetch(url)))
+        issued, issue_match = parse_issue_datetime(text)
+        if issued is None or issue_match is None:
+            return name, {"active": False, "reason": "issue_date_unreadable", "url": url}
+        locations = parse_marine_locations(text, issue_match.end())
+        if not locations:
+            return name, {"active": False, "reason": "local_scope_unverified", "url": url}
+        cancelled = parse_marine_cancellations(text, issue_match.end(), name)
+        header = re.split(r"Timing\s*:|Synopsis\s*:", text[issue_match.end():], maxsplit=1, flags=re.I)[0]
+        ambiguous_cancel = False
+        for sentence in re.split(r"[.;]|\bWHILE\b", header, flags=re.I):
+            marker = re.search(r"\b(?:CANCELLED|CANCELED|DISCONTINUED|LIFTED)\b", sentence, re.I)
+            if marker and not cancelled and not re.search(r"\b(?:NO|NOT|IF|UNLESS|WHEN|WILL|WOULD)\b", sentence[:marker.start()], re.I):
+                ambiguous_cancel = True
+        now = datetime.now(ANTIGUA_TIME)
+        checks = {}
+        for island in ("Antigua", "Barbuda"):
+            result = {"active": False, "url": url}
+            if island in cancelled:
+                result["reason"] = "cancelled"
+            elif island not in locations:
+                result["reason"] = "not_for_antigua_or_barbuda"
+            elif ambiguous_cancel:
+                result["reason"] = "cancellation_status_unverified"
+            else:
+                start, expiry = get_timing_window(text, issued, True, target_island=island)
+                if start is None or expiry is None:
+                    result["reason"] = "timing_unreadable"
+                elif start > expiry:
+                    result["reason"] = "invalid_timing"
+                elif issued > now:
+                    result["reason"] = "future_issue"
+                else:
+                    result.update(starts=start.isoformat(), expires=expiry.isoformat())
+                    if now < start:
+                        result["reason"] = "not_started"
+                    elif now >= expiry:
+                        result["reason"] = "expired"
+                    else:
+                        result.update(active=True, reason="active")
+            checks[island] = result
+        return name, {"active": any(c["active"] for c in checks.values()),
+                      "reason": "area_checks", "area_checks": checks, "url": url}
+    except Exception:
+        return name, {"active": False, "reason": "bulletin_error", "url": url}
 
 
 def get_rainviewer_frames():
@@ -1470,6 +1390,19 @@ def fetch_radar_tile(
     )
 
 
+def load_official_marine_alerts():
+    links = dict(MARINE_BULLETINS)
+    links.update(get_current_marine_links())
+    results = {}
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        for name, result in executor.map(check_alert, links.items()):
+            results[name] = dict(result, url=links.get(name, MARINE_BULLETINS.get(name)))
+    return results
+
+
+OFFICIAL_ALERTS = OfficialAlertService(marine_loader=load_official_marine_alerts)
+
+
 class Handler(
     BaseHTTPRequestHandler
 ):
@@ -1643,49 +1576,17 @@ class Handler(
 
         if path == "/alerts":
             try:
-                current_links = (
-                    get_current_marine_links()
-                )
-
-                active_alerts = []
-                checked = {}
-
-                with ThreadPoolExecutor(
-                    max_workers=4
-                ) as executor:
-                    for (
-                        name,
-                        result,
-                    ) in executor.map(
-                        check_alert,
-                        current_links.items(),
-                    ):
-                        checked[name] = result
-
-                        if result[
-                            "active"
-                        ]:
-                            active_alerts.append(
-                                name
-                            )
-
+                data = OFFICIAL_ALERTS.snapshot()
+                # Older clients also see an unavailable state instead of an
+                # empty/all-clear feed when any required coverage is unknown.
+                complete = data["status"] == "ready"
+                self.send_json(data, 200 if complete or data["alerts"] else 503)
+            except Exception:
                 self.send_json({
-                    "alerts":
-                        active_alerts,
-                    "checked":
-                        checked,
-                })
-
-            except Exception as error:
-                self.send_json(
-                    {
-                        "alerts": [],
-                        "error":
-                            str(error),
-                    },
-                    502,
-                )
-
+                    "alerts": [], "links": {}, "alert_sources": {},
+                    "status": "unavailable", "checked": {},
+                    "error": "Official alert verification is unavailable",
+                }, 503)
             return
 
         if path == "/tides":
