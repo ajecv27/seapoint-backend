@@ -63,7 +63,7 @@ button,input{font:inherit}button{cursor:pointer;-webkit-tap-highlight-color:tran
 <button id="jump-latest" aria-label="Go to now" disabled><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 5 10 7-10 7ZM19 5v14"/></svg></button>
 </div><div class="scrubber"><span id="now-marker" hidden aria-label="Now"></span><input id="timeline" type="range" min="0" max="1" step="1" value="0" aria-label="Weather map time" disabled></div>
 <div class="timeline-labels"><span id="start">Recent observations</span><span class="zone">Antigua time</span><span id="end">Latest</span></div></footer>
-<script src="/rain-motion.js?v=1"></script>
+<script src="/rain-motion.js?v=2"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script src="https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.1.4/leaflet-maplibre-gl.js"></script><script>
@@ -116,11 +116,12 @@ const MotionOverlay=L.Layer.extend({
 });
 const rainMotionOverlay=new MotionOverlay().addTo(map);
 let rainMotionRenderer=null;
-try{if(window.SeaPointRainMotion)rainMotionRenderer=SeaPointRainMotion.createRenderer(rainMotionOverlay._canvas,{cacheSize:4});}catch(_){}
-let motionViewChanging=false,motionViewRevision=0,motionReadyKey='',motionJob=null,motionWanted=null;
+try{if(window.SeaPointRainMotion)rainMotionRenderer=SeaPointRainMotion.createRenderer(rainMotionOverlay._canvas,{cacheSize:4,workingSize:256,gridSize:64,maxDisplacement:24});}catch(_){}
+let motionViewChanging=false,motionViewRevision=0,motionReadyKey='',motionJob=null,motionWanted=null,motionBuffered=false,motionPrefetch=null;
+const motionPrefetchedKeys=new Set();
 let motionStatus=rainMotionRenderer&&rainMotionRenderer.supported?'idle':'unsupported';
 const motionFailures=new Map(),readableTiles=new Map();
-window.seapointMotionState=()=>({supported:!!(rainMotionRenderer&&rainMotionRenderer.supported),state:motionStatus,kind:motionWanted&&motionWanted.a.kind,pair:motionReadyKey,viewChanging:motionViewChanging,captureCacheSize:readableTiles.size,renderer:rainMotionRenderer&&rainMotionRenderer.stats});
+window.seapointMotionState=()=>({supported:!!(rainMotionRenderer&&rainMotionRenderer.supported),state:motionStatus,kind:motionWanted&&motionWanted.a.kind,pair:motionReadyKey,viewChanging:motionViewChanging,buffering:motionBuffered,prefetching:!!motionPrefetch,captureCacheSize:readableTiles.size,renderer:rainMotionRenderer&&rainMotionRenderer.stats});
 function hideRainMotion(){rainMotionOverlay._canvas.style.display='none';}
 function motionPairKey(a,b){return key(a)+'|'+key(b)+(a.kind==='observed'?'|view:'+motionViewRevision:'');}
 function readableTile(image){
@@ -135,6 +136,14 @@ async function captureRainFrame(frame,layer){
   canvas.width=image.naturalWidth;canvas.height=image.naturalHeight;ctx.drawImage(image,0,0);
   return {pixels:ctx.getImageData(0,0,canvas.width,canvas.height),bounds:forecastMeta.bounds};
  }
+ // A new zoom starts downloading tiles before moveend. Capture only after
+ // that load settles, so slow tiles do not disable movement for this view.
+ if(layer.isLoading&&layer.isLoading())await new Promise((resolve,reject)=>{
+  const finish=()=>{clearTimeout(timer);layer.off('load',finish);resolve();};
+  const timer=setTimeout(()=>{layer.off('load',finish);reject(new Error('Radar tiles still loading'));},6000);
+  layer.on('load',finish);
+  if(!layer.isLoading())finish();
+ });
  const rect=map.getContainer().getBoundingClientRect();
  const scale=Math.min(window.devicePixelRatio||1,2,1024/Math.max(rect.width,rect.height));
  canvas.width=Math.max(1,Math.round(rect.width*scale));canvas.height=Math.max(1,Math.round(rect.height*scale));
@@ -144,6 +153,19 @@ async function captureRainFrame(frame,layer){
  const images=await Promise.all(tiles.map(tile=>readableTile(tile.el)));
  for(let i=0;i<tiles.length;i++){const r=tiles[i].el.getBoundingClientRect();ctx.drawImage(images[i],r.left-rect.left,r.top-rect.top,r.width,r.height);}
  return {pixels:ctx.getImageData(0,0,canvas.width,canvas.height),bounds:map.getBounds()};
+}
+function prefetchFollowingMotion(a,b){
+ if(!playing||motionPrefetch||!rainMotionRenderer||!rainMotionRenderer.prefetchPair||motionViewChanging)return;
+ const pool=b.kind==='forecast'?predictionFrames:radarFrames,index=pool.indexOf(b),next=pool[index+1];
+ if(!next||next.kind!==b.kind||next.time-b.time>(b.kind==='observed'?900:5400))return;
+ const id=motionPairKey(b,next);if(motionPrefetchedKeys.has(id))return;
+ const first=loaded.get(key(b)),second=loaded.get(key(next));if(!first||!second)return;
+ motionPrefetchedKeys.add(id);while(motionPrefetchedKeys.size>8)motionPrefetchedKeys.delete(motionPrefetchedKeys.values().next().value);
+ const job={id,view:motionViewRevision};motionPrefetch=job;
+ Promise.all([captureRainFrame(b,first),captureRainFrame(next,second)]).then(frames=>{
+  if(motionViewChanging||(b.kind==='observed'&&job.view!==motionViewRevision))return;
+  return rainMotionRenderer.prefetchPair(frames[0].pixels,frames[1].pixels,id);
+ }).catch(()=>{}).finally(()=>{if(motionPrefetch===job)motionPrefetch=null;});
 }
 function boundedMotionFailure(id){motionFailures.set(id,Date.now()+60000);while(motionFailures.size>12)motionFailures.delete(motionFailures.keys().next().value);}
 function startMotionPreparation(){
@@ -168,9 +190,9 @@ function renderMotionPair(a,b,first,second,blend){
  const id=motionPairKey(a,b);
  if((motionFailures.get(id)||0)>Date.now())return false;
  if(!motionWanted||motionWanted.id!==id)motionWanted={a,b,first,second,id};
- if(motionReadyKey!==id){startMotionPreparation();return false;}
+ if(motionReadyKey!==id){startMotionPreparation();motionBuffered=playing&&!!motionJob;return false;}
  if(!rainMotionRenderer.render(blend)){motionStatus='unavailable';return false;}
- first.setOpacity(0);second.setOpacity(0);rainMotionOverlay._canvas.style.display='block';motionStatus='moving';return true;
+ first.setOpacity(0);second.setOpacity(0);rainMotionOverlay._canvas.style.display='block';motionStatus=rainMotionRenderer.stats.mode==='motion'?'moving':rainMotionRenderer.stats.mode==='stationary'?'stationary':'blending';prefetchFollowingMotion(a,b);return true;
 }
 map.on('movestart zoomstart',()=>{motionViewChanging=true;hideRainMotion();if(active.length)render();});
 map.on('moveend zoomend',()=>{motionViewChanging=false;motionViewRevision++;motionWanted=null;hideRainMotion();if(active.length)render();});
@@ -203,6 +225,11 @@ function frameLayer(frame){
   }else{
    layer=L.tileLayer(frame.url,{opacity:0,tileSize:256,maxNativeZoom:7,maxZoom:12,className:'rain-overlay',attribution:'Radar: RainViewer'});
    layer.on('tileload',()=>{successes++;});layer.once('load',()=>finish(successes>0));
+   layer.on('load',()=>{
+    if(motionWanted&&(motionWanted.first===layer||motionWanted.second===layer)&&motionFailures.has(motionWanted.id)){
+     motionFailures.delete(motionWanted.id);if(!motionViewChanging)render();
+    }
+   });
   }
   layer.addTo(map);
  });pending.set(id,task);task.finally(()=>pending.delete(id)).catch(()=>{});return task;
@@ -217,6 +244,7 @@ function legend(kind){
  $('legend').setAttribute('aria-label',kind==='forecast'?'Forecast rain intensity, mm per hour':'Observed radar intensity, RainViewer scale');
 }
 function render(){
+ motionBuffered=false;
  if(!active.length)return false;
  const kind=radarFrames.length&&position<=observationEnd()?'observed':'forecast';
  const pool=kind==='observed'?radarFrames:predictionFrames;
@@ -235,24 +263,28 @@ function render(){
  const first=loaded.get(key(a)),second=loaded.get(key(b));
  if(!first||!second){$('notice').textContent='Buffering weather frames…';$('notice').hidden=false;return false;}
  const next=new Set([first,second]);for(const layer of visibleLayers)if(!next.has(layer))layer.setOpacity(0);
- // Original timestamps always show the actual image. Intervening positions
- // use matched rain-pattern movement; unsupported/unmatched cases step through
- // the original frames instead of dissolving two stationary images together.
+ // Original timestamps show the actual image. Verified patterns move;
+ // weak matches grow/dissipate continuously rather than jumping at halfway.
  const gap=b.time-a.time;
  const canInterpolate=a!==b && gap>0 && gap<=(kind==='observed'?900:5400) && blend>0 && blend<1;
  if(!canInterpolate || !renderMotionPair(a,b,first,second,blend)){
   hideRainMotion();
-  const actual=blend<.5?first:second;
-  first.setOpacity(actual===first ? .78 : 0);
-  if(second!==first)second.setOpacity(actual===second ? .78 : 0);
+  if(first===second){first.setOpacity(.78);}
+  else if(motionBuffered){first.setOpacity(.78);second.setOpacity(0);}
+  else if(canInterpolate){
+   // A smooth, opacity-corrected image transition remains usable without GPU
+   // motion or readable pixels; no unverified path is assigned to a rain cell.
+   const upper=.78*blend;first.setOpacity(.78*(1-blend)/(1-upper));second.setOpacity(upper);
+   motionStatus='blending';
+  }else{const actual=blend<.5?first:second;first.setOpacity(actual===first ? .78 : 0);second.setOpacity(actual===second ? .78 : 0);}
  }
  visibleLayers=next;setMapStatus(kind==='forecast'?'FORECAST':'OBSERVED');
  const detail=kind==='forecast'?'Forecast rain · hourly model':'Observed radar · '+format(shown.time);
  if(detail!==lastDetail){$('detail').textContent=detail;lastDetail=detail;}
  legend(kind);
  const outside=kind==='forecast'&&!L.latLngBounds(forecastMeta.bounds).intersects(map.getBounds());
- $('notice').hidden=!outside;if(outside)$('notice').textContent='Outside the eastern Caribbean forecast coverage';
- return true;
+ $('notice').hidden=!outside&&!motionBuffered;if(outside)$('notice').textContent='Outside the eastern Caribbean forecast coverage';else if(motionBuffered)$('notice').textContent='Preparing smooth rain playback…';
+ return !motionBuffered;
 }
 function updateNowMarker(){
  const fraction=(Date.now()/1000-timelineStart)/(timelineEnd-timelineStart);
@@ -319,7 +351,7 @@ function tick(ms){
     }else if(candidate>=timelineEnd){
      position=timelineEnd;holdAction='loop';holdUntil=ms+(inObserved?2500:1500);
     }else position=candidate;
-    if(render()===false){position=old;holdUntil=0;holdAction='';}
+    if(render()===false){position=motionBuffered&&motionWanted?Math.max(old,Math.min(candidate,motionWanted.a.time)):old;$('timeline').value=String(Math.round(position));$('clock').textContent=format(position);holdUntil=0;holdAction='';}
    }
   }
   lastTick=ms;

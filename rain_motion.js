@@ -16,14 +16,14 @@
         !a.data || !b.data || a.data.length !== a.width * a.height * 4 ||
         b.data.length !== b.width * b.height * 4) throw new Error('Rain frame sizes differ');
     const fullWidth = a.width, fullHeight = a.height;
-    const scale = Math.min(1, Math.max(48, Math.min(160, opts.workingSize || 112)) / Math.max(fullWidth, fullHeight));
+    const scale = Math.min(1, Math.max(48, Math.min(256, opts.workingSize || 256)) / Math.max(fullWidth, fullHeight));
     const width = Math.max(12, Math.round(fullWidth * scale));
     const height = Math.max(12, Math.round(fullHeight * scale));
-    const gridSize = Math.max(4, Math.min(24, Math.round(opts.gridSize || 16)));
+    const gridSize = Math.max(4, Math.min(64, Math.round(opts.gridSize || 64)));
     const longest = Math.max(width, height);
     const gridWidth = Math.max(4, Math.round(gridSize * width / longest));
     const gridHeight = Math.max(4, Math.round(gridSize * height / longest));
-    const limit = Math.max(2, Math.min(32, opts.maxDisplacement || 18));
+    const limit = Math.max(2, Math.min(32, opts.maxDisplacement || 24));
     const count = gridWidth * gridHeight;
     const forward = new Float32Array(count * 3), backward = new Float32Array(count * 3);
     let difference = 0;
@@ -33,7 +33,7 @@
       for (let c = 0; c < 3; c++) difference += Math.abs(a.data[i + c] * aa - b.data[i + c] * ba) / 255;
     }
     const result = {forward, backward, gridWidth, gridHeight, width, height,
-      maxDisplacement: limit, matchedFraction: 0, mode: 'nearest', preparationMs: 0};
+      maxDisplacement: limit, matchedFraction: 0, mode: 'blend', preparationMs: 0};
     if (difference / (fullWidth * fullHeight) < 0.000001) {
       result.mode = 'stationary'; result.matchedFraction = 1;
       result.preparationMs = Date.now() - started; return result;
@@ -91,6 +91,16 @@
       const field = new Float32Array(count * 3);
       for (let gy = 0; gy < gridHeight; gy++) for (let gx = 0; gx < gridWidth; gx++) {
         const cx = (gx + .5) * width / gridWidth, cy = (gy + .5) * height / gridHeight;
+        // Every candidate uses this same source patch. A dry/flat patch cannot
+        // pass the final correlation check, so avoid searching it at all.
+        const sx = Math.round(cx), sy = Math.round(cy), full = source[0];
+        if (sx - 5 < 0 || sy - 5 < 0 || sx + 5 >= width || sy + 5 >= height) continue;
+        let sum = 0, squares = 0, samples = 0;
+        for (let y = -5; y <= 5; y += 2) for (let x = -5; x <= 5; x += 2) {
+          const value = full.data[(sy + y) * width + sx + x];
+          sum += value; squares += value * value; samples++;
+        }
+        if (sum < .08 || squares - sum * sum / samples < .001) continue;
         let dx = 0, dy = 0, best = null;
         for (let level = 2; level >= 0; level--) {
           const factor = Math.pow(2, level), image = source[level], other = target[level];
@@ -188,9 +198,34 @@
       }
     }
     fill(forward, pa[0]); fill(backward, pb[0]);
-    let wet = 0, matched = 0;
+    function regularize(field) {
+      const original = field.slice();
+      const varianceLimit = .5 * Math.pow(Math.min(width / gridWidth, height / gridHeight), 2);
+      for (let gy = 0; gy < gridHeight; gy++) for (let gx = 0; gx < gridWidth; gx++) {
+        const i = (gy * gridWidth + gx) * 3;
+        if (original[i + 2] < .15) continue;
+        let weight = 0, dx = 0, dy = 0, squares = 0;
+        for (let yy = Math.max(0, gy - 2); yy <= Math.min(gridHeight - 1, gy + 2); yy++) {
+          for (let xx = Math.max(0, gx - 2); xx <= Math.min(gridWidth - 1, gx + 2); xx++) {
+            const at = (yy * gridWidth + xx) * 3;
+            if (original[at + 2] < .15) continue;
+            const w = original[at + 2] * Math.exp(-((gx - xx) ** 2 + (gy - yy) ** 2) / 2);
+            weight += w; dx += original[at] * w; dy += original[at + 1] * w;
+            squares += (original[at] ** 2 + original[at + 1] ** 2) * w;
+          }
+        }
+        dx /= weight; dy /= weight;
+        field[i] = dx; field[i + 1] = dy;
+        // Conflicting nearby matches cannot define a reliable deformation.
+        // Keep coherent motion; smoothly blend uncertain growth/dissipation.
+        field[i + 2] *= Math.exp(-Math.max(0, squares / weight - dx * dx - dy * dy) / varianceLimit);
+      }
+    }
+    regularize(forward); regularize(backward);
+    let wet = 0, matched = 0, hasMotion = false;
     for (let gy = 0; gy < gridHeight; gy++) for (let gx = 0; gx < gridWidth; gx++) {
       const i = (gy * gridWidth + gx) * 3;
+      if (Math.max(forward[i + 2], backward[i + 2]) >= .15) hasMotion = true;
       const x = Math.min(width - 1, Math.floor((gx + .5) * width / gridWidth));
       const y = Math.min(height - 1, Math.floor((gy + .5) * height / gridHeight));
       if (Math.max(pa[0].data[y * width + x], pb[0].data[y * width + x]) > .02) {
@@ -198,7 +233,9 @@
       }
     }
     result.matchedFraction = wet ? matched / wet : 0;
-    result.mode = result.matchedFraction >= .18 ? 'motion' : 'nearest';
+    // A small matched cell still moves even when most of the scene is growing
+    // or dissipating. Confidence is applied locally by the renderer.
+    result.mode = hasMotion ? 'motion' : 'blend';
     result.preparationMs = Date.now() - started;
     return result;
   }
@@ -221,27 +258,41 @@
     vec3 flowAt(sampler2D tex,vec2 uv){
       vec4 v=texture2D(tex,clamp(uv,vec2(0.),vec2(1.)));
       vec2 movement=v.b>.001?(v.rg*255.-128.)/127./v.b:vec2(0.);
+      // Packing error is largest at a confidence boundary; keep the inverse
+      // solve inside the observed displacement range and fade that error out.
+      movement=clamp(movement,vec2(-1.),vec2(1.))*smoothstep(.02,.08,v.b);
       return vec3(movement*u_limit/u_work,v.b);
     }
+    vec4 premultiply(vec4 color){return vec4(color.rgb*color.a,color.a);}
     void main(){
       vec4 originalA=imageAt(u_a,v_uv),originalB=imageAt(u_b,v_uv);
       if(u_t<=0.){gl_FragColor=originalA;return;}
       if(u_t>=1.){gl_FragColor=originalB;return;}
-      if(u_mode>1.5){gl_FragColor=u_t<.5?originalA:originalB;return;}
+      vec4 color=mix(premultiply(originalA),premultiply(originalB),u_t);
       vec2 pa=v_uv,pb=v_uv;
-      vec4 a=originalA,b=originalB;
       if(u_mode>.5){
-        for(int i=0;i<3;i++){
-          pa=v_uv-u_t*flowAt(u_forward,pa).xy;
-          pb=v_uv-(1.-u_t)*flowAt(u_backward,pb).xy;
+        for(int i=0;i<8;i++){
+          pa=mix(pa,v_uv-u_t*flowAt(u_forward,pa).xy,.5);
+          pb=mix(pb,v_uv-(1.-u_t)*flowAt(u_backward,pb).xy,.5);
         }
         vec3 fa=flowAt(u_forward,pa),fb=flowAt(u_backward,pb);
-        if(fa.z<.1||fb.z<.1){gl_FragColor=u_t<.5?originalA:originalB;return;}
-        a=imageAt(u_a,pa);b=imageAt(u_b,pb);
+        float ca=smoothstep(.08,.25,fa.z),cb=smoothstep(.08,.25,fb.z);
+        // Reject inverse solutions that fold or fail to reach this output
+        // pixel, and matches that no longer agree at their actual endpoints.
+        ca*=1.-smoothstep(.5,2.,length((pa+u_t*fa.xy-v_uv)*u_work));
+        cb*=1.-smoothstep(.5,2.,length((pb+(1.-u_t)*fb.xy-v_uv)*u_work));
+        ca*=1.-smoothstep(.5,2.,length((fa.xy+flowAt(u_backward,pa+fa.xy).xy)*u_work));
+        cb*=1.-smoothstep(.5,2.,length((fb.xy+flowAt(u_forward,pb+fb.xy).xy)*u_work));
+        if(ca+cb>.00001){
+          // Either verified direction supplies both observed endpoints of its
+          // match. Missing reverse coverage must not leave a stationary ghost.
+          vec4 fromA=mix(premultiply(imageAt(u_a,pa)),premultiply(imageAt(u_b,pa+fa.xy)),u_t);
+          vec4 fromB=mix(premultiply(imageAt(u_a,pb+fb.xy)),premultiply(imageAt(u_b,pb)),u_t);
+          vec4 warped=(ca*fromA+cb*fromB)/(ca+cb);
+          color=mix(color,warped,max(ca,cb));
+        }
       }
-      float alpha=mix(a.a,b.a,u_t);
-      vec3 premult=mix(a.rgb*a.a,b.rgb*b.a,u_t);
-      gl_FragColor=alpha>.00001?vec4(premult/alpha,alpha):vec4(0.);
+      gl_FragColor=color.a>.00001?vec4(color.rgb/color.a,color.a):vec4(0.);
     }`;
 
   function createRenderer(canvas, options) {
@@ -249,8 +300,9 @@
   }
   class RainMotionRenderer {
     constructor(canvas, options) {
-      this.canvas = canvas; this.options = Object.assign({workingSize:112,gridSize:16,maxDisplacement:18,cacheSize:4}, options);
+      this.canvas = canvas; this.options = Object.assign({workingSize:256,gridSize:64,maxDisplacement:24,cacheSize:4}, options);
       this.supported = false; this._disposed = false; this._generation = 0; this._cache = new Map();
+      this._inflight = new Map();
       this._worker = null; this._workerUrl = null; this._activeJob = null; this._queuedJob = null; this._jobId = 0;
       this._state = 'unsupported'; this._pair = null; this._pendingKey = null; this._pendingPromise = null;
       try {
@@ -281,7 +333,7 @@
     get stats() {
       return Object.freeze({state:this._state,cacheSize:this._cache.size,pending:!!this._pendingPromise,
         matchedFraction:this._pair?this._pair.motion.matchedFraction:0,confidence:this._pair?this._pair.motion.matchedFraction:0,
-        mode:this._pair?this._pair.motion.mode:'nearest',preparationMs:this._pair?this._pair.motion.preparationMs:0,
+        mode:this._pair?this._pair.motion.mode:'blend',preparationMs:this._pair?this._pair.motion.preparationMs:0,
         worker:!!this._worker,width:this.canvas.width,height:this.canvas.height,key:this._pair?this._pair.key:null,error:this._error||null});
     }
     _finishJob(message) {
@@ -298,32 +350,55 @@
       if(this._activeJob){this._activeJob.reject(new Error(this._error));this._activeJob=null;}
       if(this._queuedJob){this._queuedJob.reject(new Error(this._error));this._queuedJob=null;}
     }
-    _compute(a,b) {
+    _compute(a,b,key,priority) {
       if(!this._worker)return Promise.reject(new Error('Motion worker unavailable'));
       return new Promise((resolve,reject)=>{
-        const job={id:++this._jobId,a:{width:a.width,height:a.height,data:a.data.slice()},b:{width:b.width,height:b.height,data:b.data.slice()},resolve,reject};
-        if(this._activeJob){if(this._queuedJob)this._queuedJob.reject(new Error('Motion pair superseded'));this._queuedJob=job;}
+        if(this._activeJob&&this._queuedJob&&this._queuedJob.priority&&!priority){reject(new Error('Motion pair superseded'));return;}
+        const job={id:++this._jobId,key,priority,a:{width:a.width,height:a.height,data:a.data.slice()},b:{width:b.width,height:b.height,data:b.data.slice()},resolve,reject};
+        if(this._activeJob){
+          if(this._queuedJob){this._inflight.delete(this._queuedJob.key);this._queuedJob.reject(new Error('Motion pair superseded'));}
+          this._queuedJob=job;
+        }
         else this._sendJob(job);
       });
     }
+    _validPair(a,b) {
+      return !!(a&&b&&Number.isInteger(a.width)&&Number.isInteger(a.height)&&a.width>0&&a.height>0&&a.width===b.width&&a.height===b.height&&a.data&&b.data&&a.data.length===a.width*a.height*4&&b.data.length===b.width*b.height*4);
+    }
+    _motionFor(a,b,key,priority) {
+      const cached=this._cache.get(key);
+      if(cached){this._cache.delete(key);this._cache.set(key,cached);return Promise.resolve(cached);}
+      if(this._inflight.has(key)){
+        if(priority&&this._queuedJob&&this._queuedJob.key===key)this._queuedJob.priority=true;
+        return this._inflight.get(key);
+      }
+      if(!priority&&this._activeJob&&this._queuedJob&&this._queuedJob.priority)return Promise.reject(new Error('Motion pair superseded'));
+      const promise=this._compute(a,b,key,priority).then(motion=>{
+        if(this._disposed)throw new Error('Motion renderer disposed');
+        this._cache.set(key,motion);
+        const maximum=Math.max(1,Math.min(4,this.options.cacheSize||4));
+        while(this._cache.size>maximum)this._cache.delete(this._cache.keys().next().value);
+        return motion;
+      }).finally(()=>{if(this._inflight.get(key)===promise)this._inflight.delete(key);});
+      this._inflight.set(key,promise);return promise;
+    }
+    async prefetchPair(a,b,key) {
+      if(!this.supported||this._disposed||!this._validPair(a,b))return false;
+      try{await this._motionFor(a,b,String(key),false);return this.supported&&!this._disposed;}
+      catch(error){return false;}
+    }
     async preparePair(a,b,key) {
       if(!this.supported||this._disposed)return false;
-      if(!a||!b||!Number.isInteger(a.width)||!Number.isInteger(a.height)||a.width<1||a.height<1||a.width!==b.width||a.height!==b.height||!a.data||!b.data||a.data.length!==a.width*a.height*4||b.data.length!==b.width*b.height*4)return false;
+      if(!this._validPair(a,b))return false;
       key=String(key);
       if(this._pendingKey===key&&this._pendingPromise)return this._pendingPromise;
       if(this._pair&&this._pair.key===key&&!this._pendingPromise)return true;
       const generation=++this._generation;this._pendingKey=key;this._state='preparing';
       const promise=(async()=>{
-        let motion=this._cache.get(key);
-        if(motion){this._cache.delete(key);this._cache.set(key,motion);}
-        else {
-          try{motion=await this._compute(a,b);}catch(error){
-            if(generation!==this._generation||this._disposed)return false;
-            this._error=String(error);this._state='unavailable';return false;
-          }
-          this._cache.set(key,motion);
-          const maximum=Math.max(1,Math.min(4,this.options.cacheSize||4));
-          while(this._cache.size>maximum)this._cache.delete(this._cache.keys().next().value);
+        let motion;
+        try{motion=await this._motionFor(a,b,key,true);}catch(error){
+          if(generation!==this._generation||this._disposed)return false;
+          this._error=String(error);this._state='unavailable';return false;
         }
         if(generation!==this._generation||this._disposed||!this.supported)return false;
         const gl=this.gl;this.canvas.width=a.width;this.canvas.height=a.height;
@@ -358,7 +433,7 @@
       gl.bindBuffer(gl.ARRAY_BUFFER,this.buffer);gl.enableVertexAttribArray(this.position);gl.vertexAttribPointer(this.position,2,gl.FLOAT,false,0,0);
       ['a','b','forward','backward'].forEach((name,index)=>{gl.activeTexture(gl.TEXTURE0+index);gl.bindTexture(gl.TEXTURE_2D,this.textures[index]);gl.uniform1i(this.uniforms[name],index);});
       gl.uniform2f(this.uniforms.work,motion.width,motion.height);gl.uniform1f(this.uniforms.limit,motion.maxDisplacement);
-      gl.uniform1f(this.uniforms.t,t);gl.uniform1f(this.uniforms.mode,motion.mode==='motion'?1:motion.mode==='nearest'?2:0);
+      gl.uniform1f(this.uniforms.t,t);gl.uniform1f(this.uniforms.mode,motion.mode==='motion'?1:0);
       gl.drawArrays(gl.TRIANGLE_STRIP,0,4);return gl.getError()===gl.NO_ERROR;
     }
     dispose() {
@@ -366,7 +441,7 @@
       this._workerFailure();if(this._workerUrl)URL.revokeObjectURL(this._workerUrl);
       if(this._onLost)this.canvas.removeEventListener('webglcontextlost',this._onLost);
       if(this.gl){for(const texture of this.textures||[])this.gl.deleteTexture(texture);if(this.buffer)this.gl.deleteBuffer(this.buffer);if(this.program)this.gl.deleteProgram(this.program);}
-      this._cache.clear();this._pair=null;
+      this._cache.clear();this._inflight.clear();this._pair=null;
     }
   }
   return {computeMotion,createRenderer,RainMotionRenderer};
