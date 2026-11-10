@@ -75,13 +75,15 @@ def fixture_png(index=0, side=256):
 
 
 @contextmanager
-def fixture_server():
+def fixture_server(extra_images=None):
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             if self.path.startswith('/harness'):
                 content, kind = HARNESS.encode(), 'text/html'
             elif self.path.split('?')[0] == '/rain_motion.js':
                 content, kind = (ROOT / 'rain_motion.js').read_bytes(), 'text/javascript'
+            elif extra_images and self.path.split('?')[0] in extra_images:
+                content, kind = extra_images[self.path.split('?')[0]], 'image/png'
             elif self.path.startswith('/real-forecast/'):
                 name = self.path.rsplit('/', 1)[-1]
                 content, kind = (ROOT / 'tests' / 'real-forecast' / name).read_bytes(), 'image/png'
@@ -246,23 +248,30 @@ def check_module(browser, fixture_base):
 
 def external_asset(route):
     url = route.request.url
+    origin = route.request.headers.get('origin','')
+    cache_key = (url,origin)
     try:
-        if url not in ASSET_CACHE:
-            request = Request(url, headers={'User-Agent': 'SeaPoint-browser-motion/1.0', 'Referer': BASE_URL + '/'})
+        if cache_key not in ASSET_CACHE:
+            request_headers = {'User-Agent':'SeaPoint-browser-motion/1.0','Referer':BASE_URL+'/'}
+            if origin:
+                request_headers['Origin'] = origin
+            request = Request(url,headers=request_headers)
             try:
                 response = urlopen(request, timeout=25)
             except HTTPError as error:
                 response = error
             with response:
-                ASSET_CACHE[url] = (response.status, response.read(), response.headers.get('Content-Type','application/octet-stream'))
-        status, data, content_type = ASSET_CACHE[url]
-        route.fulfill(status=status, body=data, content_type=content_type,
-                      headers={'Access-Control-Allow-Origin':'*'})
+                ASSET_CACHE[cache_key] = (response.status, response.read(),
+                    {name: value for name, value in response.headers.items()
+                     if name.lower() in ('content-type', 'access-control-allow-origin',
+                                         'access-control-allow-credentials', 'vary')})
+        status, data, headers = ASSET_CACHE[cache_key]
+        route.fulfill(status=status, body=data, headers=headers)
     except Exception:
         route.abort()
 
 
-def open_radar_fixture(browser, fixture_base, cors=True, forecast_gap=False, webgl=True):
+def open_radar_fixture(browser, fixture_base, cors=True, forecast_gap=False, webgl=True, forecast_images=None):
     page = browser.new_page(viewport={'width':390,'height':844}, device_scale_factor=2)
     page.test_errors = []
     page.on('pageerror', lambda error: page.test_errors.append(str(error)))
@@ -283,7 +292,8 @@ def open_radar_fixture(browser, fixture_base, cors=True, forecast_gap=False, web
     page.route('**/forecast-frames',lambda route:route.fulfill(json={
         'status':'ready','source':'NOAA GFS','units':'mm/h','model_run':int(now-6*3600),
         'fetched_at':int(now),'resolution_km':28,'bounds':[[10,-68],[23,-55]],'frames':future}))
-    images = {f'/fixture-forecast/{i}.png':fixture_png(i,640) for i in range(51)}
+    images = {f'/fixture-forecast/{i}.png':
+              (forecast_images or {}).get(i) or fixture_png(i,640) for i in range(51)}
     page.route('**/fixture-forecast/*.png',lambda route:route.fulfill(body=images[urlsplit(route.request.url).path],content_type='image/png'))
     page.route('**/basemap-style',lambda route:route.fulfill(json={
         'version':8,'sources':{},'layers':[{'id':'test-background','type':'background','paint':{'background-color':'#183d63'}}]}))
@@ -365,11 +375,22 @@ def check_integration(browser, fixture_base):
         assert fallback.evaluate('mapStatus')=='OBSERVED'
         assert not canvas_visible(fallback),fallback.evaluate('window.seapointMotionState()')
         visible=fallback.evaluate('Array.from(loaded.values()).filter(layer=>layer.options.opacity>0).length')
-        assert visible==1,{'visible':visible,'state':fallback.evaluate('window.seapointMotionState()')}
-        fallback.locator('#play').click();before=fallback.evaluate('position');fallback.wait_for_timeout(350)
-        assert fallback.evaluate('playing') is True and fallback.evaluate('position')>before
+        assert visible==2,{'visible':visible,'state':fallback.evaluate('window.seapointMotionState()')}
+        assert fallback.evaluate('window.seapointMotionState().state')=='blending'
+        opacities=[]
+        for fraction in [.49,.51]:
+            scrub(fallback,fallback_obs[2]['time']+600*fraction)
+            opacities.append(fallback.evaluate('Array.from(loaded.values()).filter(layer=>layer.options.opacity>0).map(layer=>layer.options.opacity)'))
+        assert all(len(pair)==2 for pair in opacities),opacities
+        assert max(abs(a-b) for a,b in zip(*opacities))<.03,opacities
+        scrub(fallback,fallback_obs[2]['time'])
+        assert fallback.evaluate('Array.from(loaded.values()).filter(layer=>layer.options.opacity>0).length')==1
+        scrub(fallback,fallback_obs[2]['time']+300)
+        fallback.locator('#play').click();before=fallback.evaluate('position')
+        fallback.wait_for_function('(before)=>playing&&position>before',arg=before,timeout=4000)
+        assert fallback.evaluate('playing') is True and fallback.evaluate('position')>before, fallback.evaluate('({playing,position,state:seapointMotionState()})')
         fallback.close()
-        print(f'PASS {label}: one real rain frame remains visible and playback continues',flush=True)
+        print(f'PASS {label}: two real rain layers blend smoothly and playback continues',flush=True)
 
 
 def main():
