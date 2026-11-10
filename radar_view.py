@@ -55,7 +55,7 @@ button,input{font:inherit}button{cursor:pointer;-webkit-tap-highlight-color:tran
 <button id="info-toggle" class="round" aria-label="Map information and credits" aria-controls="source-panel" aria-expanded="false"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.1"/></svg></button>
 <section id="source-panel" hidden aria-labelledby="source-title"><button id="source-close" aria-label="Close map details">×</button><h2 id="source-title">Map information &amp; credits</h2><div id="availability" role="status">Checking weather data…</div>
 <p><a href="https://www.rainviewer.com/" target="_blank" rel="noopener">RainViewer</a> supplies recent observed radar. Coverage varies.</p>
-<p><a href="https://www.ncei.noaa.gov/products/weather-climate-models/global-forecast" target="_blank" rel="noopener">NOAA GFS</a> supplies the hourly precipitation forecast, up to 48 hours ahead. Its grid is approximately 28 km; smooth blending adds no spatial detail.</p>
+<p><a href="https://www.ncei.noaa.gov/products/weather-climate-models/global-forecast" target="_blank" rel="noopener">NOAA GFS</a> supplies the hourly precipitation forecast, up to 48 hours ahead. Its grid is approximately 28 km. Motion between matching rain patterns is display interpolation, not additional forecast detail.</p>
 <p>Forecast coverage: eastern Caribbean, 10–23°N and 68–55°W. Forecast rain rates use mm/h. The timeline moves from observed radar into model forecasts; the label and legend identify each source.</p><p id="model-run"></p><p id="basemap-status"></p><p>Map data: <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap contributors</a> · <a href="https://openmaptiles.org/" target="_blank" rel="noopener">© OpenMapTiles</a>. Map service: <a href="https://openfreemap.org/" target="_blank" rel="noopener">OpenFreeMap</a>. Terrain shading: Esri, USGS, NOAA.</p>
 </section>
 <footer id="player" aria-label="Animation controls"><div class="player-row">
@@ -63,6 +63,7 @@ button,input{font:inherit}button{cursor:pointer;-webkit-tap-highlight-color:tran
 <button id="jump-latest" aria-label="Go to now" disabled><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 5 10 7-10 7ZM19 5v14"/></svg></button>
 </div><div class="scrubber"><span id="now-marker" hidden aria-label="Now"></span><input id="timeline" type="range" min="0" max="1" step="1" value="0" aria-label="Weather map time" disabled></div>
 <div class="timeline-labels"><span id="start">Recent observations</span><span class="zone">Antigua time</span><span id="end">Latest</span></div></footer>
+<script src="/rain-motion.js?v=1"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script src="https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.1.4/leaflet-maplibre-gl.js"></script><script>
@@ -104,6 +105,77 @@ function setMapStatus(value){mapStatus=value;map.getContainer().dataset.status=v
 const loaded=new Map(),pending=new Map();
 const key=f=>f.kind+':'+f.time+':'+f.url;
 const radarTileSize=window.devicePixelRatio>=2?512:256;
+// Only one full-resolution pair is uploaded to the GPU. Flow fields are kept
+// in a bounded worker cache; no extra forecast images are generated or fetched.
+const MotionOverlay=L.Layer.extend({
+ onAdd(map){this._map=map;this._canvas=L.DomUtil.create('canvas','rain-motion-canvas');this._canvas.id='rain-motion-canvas';this._canvas.style.cssText='position:absolute;pointer-events:none;display:none;opacity:.78;';map.getPane('overlayPane').appendChild(this._canvas);},
+ onRemove(){this._canvas.remove();},
+ getEvents(){return {zoomend:this._reset,viewreset:this._reset};},
+ setBounds(bounds){this._bounds=L.latLngBounds(bounds);this._reset();},
+ _reset(){if(!this._bounds||!this._map)return;const nw=this._map.latLngToLayerPoint(this._bounds.getNorthWest()),se=this._map.latLngToLayerPoint(this._bounds.getSouthEast());L.DomUtil.setPosition(this._canvas,nw);this._canvas.style.width=Math.max(1,se.x-nw.x)+'px';this._canvas.style.height=Math.max(1,se.y-nw.y)+'px';}
+});
+const rainMotionOverlay=new MotionOverlay().addTo(map);
+let rainMotionRenderer=null;
+try{if(window.SeaPointRainMotion)rainMotionRenderer=SeaPointRainMotion.createRenderer(rainMotionOverlay._canvas,{cacheSize:4});}catch(_){}
+let motionViewChanging=false,motionViewRevision=0,motionReadyKey='',motionJob=null,motionWanted=null;
+let motionStatus=rainMotionRenderer&&rainMotionRenderer.supported?'idle':'unsupported';
+const motionFailures=new Map(),readableTiles=new Map();
+window.seapointMotionState=()=>({supported:!!(rainMotionRenderer&&rainMotionRenderer.supported),state:motionStatus,kind:motionWanted&&motionWanted.a.kind,pair:motionReadyKey,viewChanging:motionViewChanging,captureCacheSize:readableTiles.size,renderer:rainMotionRenderer&&rainMotionRenderer.stats});
+function hideRainMotion(){rainMotionOverlay._canvas.style.display='none';}
+function motionPairKey(a,b){return key(a)+'|'+key(b)+(a.kind==='observed'?'|view:'+motionViewRevision:'');}
+function readableTile(image){
+ const url=image.currentSrc||image.src;if(readableTiles.has(url))return readableTiles.get(url);
+ const task=new Promise((resolve,reject)=>{const copy=new Image();copy.crossOrigin='anonymous';copy.decoding='async';const timer=setTimeout(()=>{copy.src='';reject(new Error('Radar pixels unavailable'));},6000);copy.onload=()=>{clearTimeout(timer);resolve(copy);};copy.onerror=()=>{clearTimeout(timer);reject(new Error('Radar pixels unavailable'));};copy.src=url;});
+ readableTiles.set(url,task);while(readableTiles.size>24)readableTiles.delete(readableTiles.keys().next().value);return task;
+}
+async function captureRainFrame(frame,layer){
+ const canvas=document.createElement('canvas'),ctx=canvas.getContext('2d',{willReadFrequently:true});
+ if(frame.kind==='forecast'){
+  const image=layer.getElement();if(!image||!image.naturalWidth)throw new Error('Forecast image unavailable');
+  canvas.width=image.naturalWidth;canvas.height=image.naturalHeight;ctx.drawImage(image,0,0);
+  return {pixels:ctx.getImageData(0,0,canvas.width,canvas.height),bounds:forecastMeta.bounds};
+ }
+ const rect=map.getContainer().getBoundingClientRect();
+ const scale=Math.min(window.devicePixelRatio||1,2,1024/Math.max(rect.width,rect.height));
+ canvas.width=Math.max(1,Math.round(rect.width*scale));canvas.height=Math.max(1,Math.round(rect.height*scale));
+ ctx.scale(scale,scale);
+ const tiles=Object.values(layer._tiles||{}).filter(tile=>{const image=tile.el;if(!image||!image.complete||!image.naturalWidth)return false;const r=image.getBoundingClientRect();return r.width>0&&r.height>0&&r.right>rect.left&&r.left<rect.right&&r.bottom>rect.top&&r.top<rect.bottom;});
+ if(!tiles.length)throw new Error('Visible radar tiles unavailable');
+ const images=await Promise.all(tiles.map(tile=>readableTile(tile.el)));
+ for(let i=0;i<tiles.length;i++){const r=tiles[i].el.getBoundingClientRect();ctx.drawImage(images[i],r.left-rect.left,r.top-rect.top,r.width,r.height);}
+ return {pixels:ctx.getImageData(0,0,canvas.width,canvas.height),bounds:map.getBounds()};
+}
+function boundedMotionFailure(id){motionFailures.set(id,Date.now()+60000);while(motionFailures.size>12)motionFailures.delete(motionFailures.keys().next().value);}
+function startMotionPreparation(){
+ if(motionJob||!motionWanted||motionViewChanging||!rainMotionRenderer||!rainMotionRenderer.supported)return;
+ const job=motionWanted;motionJob=job;motionReadyKey='';hideRainMotion();motionStatus='preparing';
+ Promise.all([captureRainFrame(job.a,job.first),captureRainFrame(job.b,job.second)]).then(async frames=>{
+  if(motionWanted!==job||motionViewChanging)return;
+  if(frames[0].pixels.width!==frames[1].pixels.width||frames[0].pixels.height!==frames[1].pixels.height)throw new Error('Frame dimensions differ');
+  const prepared=await rainMotionRenderer.preparePair(frames[0].pixels,frames[1].pixels,job.id);
+  if(motionWanted!==job||motionViewChanging)return;
+  if(!prepared){boundedMotionFailure(job.id);motionStatus='unmatched';return;}
+  rainMotionOverlay.setBounds(frames[0].bounds);motionReadyKey=job.id;motionStatus='ready';
+ }).catch(()=>{boundedMotionFailure(job.id);if(motionWanted===job)motionStatus='unavailable';}).finally(()=>{
+  motionJob=null;
+  if(motionWanted&&motionWanted!==job)startMotionPreparation();
+  // Also update a paused scrubbed view once its motion field is ready.
+  if(!motionViewChanging)render();
+ });
+}
+function renderMotionPair(a,b,first,second,blend){
+ if(!rainMotionRenderer||!rainMotionRenderer.supported||motionViewChanging)return false;
+ const id=motionPairKey(a,b);
+ if((motionFailures.get(id)||0)>Date.now())return false;
+ if(!motionWanted||motionWanted.id!==id)motionWanted={a,b,first,second,id};
+ if(motionReadyKey!==id){startMotionPreparation();return false;}
+ if(!rainMotionRenderer.render(blend)){motionStatus='unavailable';return false;}
+ first.setOpacity(0);second.setOpacity(0);rainMotionOverlay._canvas.style.display='block';motionStatus='moving';return true;
+}
+map.on('movestart zoomstart',()=>{motionViewChanging=true;hideRainMotion();if(active.length)render();});
+map.on('moveend zoomend',()=>{motionViewChanging=false;motionViewRevision++;motionWanted=null;hideRainMotion();if(active.length)render();});
+window.addEventListener('pagehide',()=>{if(rainMotionRenderer)rainMotionRenderer.dispose();readableTiles.clear();});
+
 window.seapointToggleInfo=()=>showInfo($('source-panel').hidden);
 window.seapointUseNativeInfo=()=>{$('info-toggle').hidden=true;};
 function notify(){if(window.SeaPointRadar)window.SeaPointRadar.postMessage('ready');}
@@ -150,6 +222,7 @@ function render(){
  const pool=kind==='observed'?radarFrames:predictionFrames;
  $('timeline').value=String(Math.round(position));$('clock').textContent=format(position);
  if(!pool.length||position<pool[0].time||position>pool.at(-1).time){
+  hideRainMotion();motionWanted=null;
   for(const layer of visibleLayers)layer.setOpacity(0);visibleLayers.clear();
   setMapStatus('GAP');$('detail').textContent='No weather frame for this time';lastDetail='';
   $('notice').textContent='No frame available at the selected time';$('notice').hidden=false;return true;
@@ -162,8 +235,17 @@ function render(){
  const first=loaded.get(key(a)),second=loaded.get(key(b));
  if(!first||!second){$('notice').textContent='Buffering weather frames…';$('notice').hidden=false;return false;}
  const next=new Set([first,second]);for(const layer of visibleLayers)if(!next.has(layer))layer.setOpacity(0);
- if(first===second)first.setOpacity(.78);
- else{first.setOpacity(.78*(1-blend));second.setOpacity(.78*blend);}
+ // Original timestamps always show the actual image. Intervening positions
+ // use matched rain-pattern movement; unsupported/unmatched cases step through
+ // the original frames instead of dissolving two stationary images together.
+ const gap=b.time-a.time;
+ const canInterpolate=a!==b && gap>0 && gap<=(kind==='observed'?900:5400) && blend>0 && blend<1;
+ if(!canInterpolate || !renderMotionPair(a,b,first,second,blend)){
+  hideRainMotion();
+  const actual=blend<.5?first:second;
+  first.setOpacity(actual===first ? .78 : 0);
+  if(second!==first)second.setOpacity(actual===second ? .78 : 0);
+ }
  visibleLayers=next;setMapStatus(kind==='forecast'?'FORECAST':'OBSERVED');
  const detail=kind==='forecast'?'Forecast rain · hourly model':'Observed radar · '+format(shown.time);
  if(detail!==lastDetail){$('detail').textContent=detail;lastDetail=detail;}
@@ -264,7 +346,7 @@ async function loadForecast(){
   const upcoming=(data.frames||[]).filter(f=>Number.isFinite(f.time)&&f.url&&f.time>=now-3600&&f.time<=Math.ceil(now/3600)*3600+48*3600).map(f=>({...f,kind:'forecast'}));
   if(upcoming.length<2)throw new Error();
   const changed=upcoming.map(key).join(',')!==forecast.map(key).join(',');forecast=upcoming;
-  announce('Forecast available through '+format(forecast.at(-1).time)+' · hourly data, smoothly blended.');
+  announce('Forecast available through '+format(forecast.at(-1).time)+' · hourly data with display motion interpolation.');
   $('model-run').textContent='Forecast model run: '+format(data.model_run)+' Antigua time.';
   if(changed||!predictionFrames.length)await activate();
  }catch(_){announce(forecast.length?'Forecast update unavailable; retaining cached forecast through '+format(forecast.at(-1).time):'Forecast temporarily unavailable. Observed radar remains available.');}

@@ -1,6 +1,7 @@
 import json
 import os
 import re
+from pathlib import Path
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, time, timedelta
@@ -1592,6 +1593,12 @@ class Handler(
         query = parse_qs(
             parsed.query
         )
+
+        if path == "/rain-motion.js":
+            script = Path(__file__).with_name("rain_motion.js").read_bytes()
+            self.send_content(script, "text/javascript; charset=utf-8",
+                              cache_control="public, max-age=300")
+            return
 
         if path == "/basemap-style":
             try:
