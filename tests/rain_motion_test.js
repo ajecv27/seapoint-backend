@@ -1,6 +1,6 @@
 'use strict';
 const assert=require('node:assert/strict');
-const {computeMotion,RainMotionRenderer}=require('../rain_motion.js');
+const {computeMotion,computeMidpointField,RainMotionRenderer}=require('../rain_motion.js');
 function frame(width=256,height=256,blobs=[]){
   const data=new Uint8ClampedArray(width*height*4);
   for(let y=0;y<height;y++)for(let x=0;x<width;x++){
@@ -37,11 +37,11 @@ const opts={workingSize:128,gridSize:20,maxDisplacement:18};
 }
 {
  const a=frame(256,256,[{x:80,y:100,rx:35,ry:32}]);const r=computeMotion(a,a,opts);assert.equal(r.mode,'stationary');assert(r.forward.every(v=>v===0));
- assert(r.backward.every(v=>v===0));assert.equal(r.matchedFraction,1);
+ assert(r.backward.every(v=>v===0));assert(r.common.every(v=>v===0));assert.equal(r.matchedFraction,1);
  const clear=frame();const born=computeMotion(clear,a,opts);const died=computeMotion(a,clear,opts);assert.equal(born.mode,'blend');assert.equal(died.mode,'blend');
  for(const unmatched of [born,died]){
   assert.equal(unmatched.matchedFraction,0);
-  assert(unmatched.forward.every(v=>v===0));assert(unmatched.backward.every(v=>v===0));
+  assert(unmatched.forward.every(v=>v===0));assert(unmatched.backward.every(v=>v===0));assert(unmatched.common.every(v=>v===0));
  }
  assert.equal(computeMotion(clear,clear,opts).mode,'stationary');
  assert.throws(()=>computeMotion(clear,{width:10,height:10,data:new Uint8Array(1)},opts));
@@ -63,12 +63,14 @@ const opts={workingSize:128,gridSize:20,maxDisplacement:18};
  const result=computeMotion(a,b,{workingSize:160,gridSize:32,maxDisplacement:18});
  assert.equal(result.mode,'motion');assert.equal(result.width,160);assert.equal(result.height,80);
  assert.equal(result.gridWidth,32);assert.equal(result.gridHeight,16);
- assert(result.forward instanceof Float32Array);assert(result.backward instanceof Float32Array);
- assert.equal(result.forward.length,32*16*3);assert.equal(result.backward.length,32*16*3);
+ assert(result.forward instanceof Float32Array);assert(result.backward instanceof Float32Array);assert(result.common instanceof Float32Array);
+ assert.equal(result.forward.length,32*16*3);assert.equal(result.backward.length,32*16*3);assert.equal(result.common.length,32*16*3);
+ assert.deepEqual(result.common,computeMidpointField(result));
+ assert.notEqual(result.common.buffer,result.forward.buffer);assert.notEqual(result.common.buffer,result.backward.buffer);
  const capped=computeMotion(a,b,{workingSize:512,gridSize:128});
  assert.equal(capped.width,256);assert.equal(capped.height,128);
  assert.equal(capped.gridWidth,64);assert.equal(capped.gridHeight,32);
- assert.equal(capped.forward.length,64*32*3);
+ assert.equal(capped.forward.length,64*32*3);assert.equal(capped.common.length,64*32*3);
  const defaults=computeMotion(a,b);
  assert.equal(defaults.width,256);assert.equal(defaults.gridWidth,64);assert.equal(defaults.maxDisplacement,24);
 }
@@ -81,7 +83,7 @@ async function testPrefetch(){
  let calls=0,complete,uploads=0;
  renderer._compute=()=>{calls++;return new Promise(resolve=>{complete=resolve;});};
  renderer.gl={activeTexture(){},bindTexture(){},pixelStorei(){},texParameteri(){},texImage2D(){uploads++;},deleteTexture(){}};
- renderer.textures=[1,2,3,4];
+ renderer.textures=[1,2,3];
  const prefetched=renderer.prefetchPair(a,b,'next');
  assert.equal(calls,1);assert.equal(renderer._pair,previous);assert.equal(renderer._generation,7);
  assert.equal(renderer.stats.state,'ready');assert.equal(renderer.stats.pending,false);
@@ -89,11 +91,11 @@ async function testPrefetch(){
  // Advancing while prefetch is pending shares the worker computation.
  const prepared=renderer.preparePair(a,b,'next');assert.equal(calls,1);
  complete(motion);assert.equal(await prefetched,true);assert.equal(await prepared,true);
- assert.equal(renderer._pair.key,'next');assert.equal(uploads,4);assert.equal(renderer._inflight.size,0);
+ assert.equal(renderer._pair.key,'next');assert.equal(uploads,3);assert.equal(renderer._inflight.size,0);
  const current=renderer._pair,generation=renderer._generation;
  renderer._compute=async()=>{calls++;return motion;};
  for(let n=0;n<6;n++)assert.equal(await renderer.prefetchPair(a,b,'ahead-'+n),true);
- assert.equal(renderer._pair,current);assert.equal(renderer._generation,generation);assert.equal(uploads,4);
+ assert.equal(renderer._pair,current);assert.equal(renderer._generation,generation);assert.equal(uploads,3);
  assert.equal(renderer._cache.size,4);assert.equal(await renderer.prefetchPair(a,b,'ahead-5'),true);assert.equal(calls,7);
  renderer._compute=async()=>{throw new Error('Expected worker failure');};
  assert.equal(await renderer.prefetchPair(a,b,'failed'),false);assert.equal(renderer._state,'ready');
