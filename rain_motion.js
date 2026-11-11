@@ -8,7 +8,56 @@
 })(typeof globalThis === 'object' ? globalThis : this, function () {
   'use strict';
 
-  // Self-contained so the same implementation can run in a Blob worker or Node.
+  // Share one source-derived displacement field at the temporal midpoint.
+  // Self-contained for the Blob worker and for directional coverage checks.
+  function computeMidpointField(motion) {
+    const common = new Float32Array(motion.forward.length);
+    const sums = new Float64Array(motion.gridWidth*motion.gridHeight*5);
+    const radius=2, gxScale=motion.gridWidth/motion.width, gyScale=motion.gridHeight/motion.height;
+
+    const interpolated=(field,x,y)=>{
+      let wx=0,wy=0,confidence=0;
+      const bx=Math.floor(x),by=Math.floor(y),fx=x-bx,fy=y-by;
+      for(let yy=0;yy<2;yy++)for(let xx=0;xx<2;xx++){
+        const gx=Math.max(0,Math.min(motion.gridWidth-1,bx+xx)),gy=Math.max(0,Math.min(motion.gridHeight-1,by+yy));
+        const i=(gy*motion.gridWidth+gx)*3,weight=(xx?fx:1-fx)*(yy?fy:1-fy),cw=field[i+2]*weight;
+        wx+=field[i]*cw;wy+=field[i+1]*cw;confidence+=cw;
+      }
+      return [confidence>1e-8?wx/confidence:0,confidence>1e-8?wy/confidence:0,confidence];
+    };
+    const smooth=(lo,hi,v)=>{v=Math.max(0,Math.min(1,(v-lo)/(hi-lo)));return v*v*(3-2*v);};
+    for(const [field,reverse,sign] of [[motion.forward,motion.backward,1],[motion.backward,motion.forward,-1]]) {
+      for(let gy=0;gy<motion.gridHeight;gy++)for(let gx=0;gx<motion.gridWidth;gx++) {
+        const i=(gy*motion.gridWidth+gx)*3,dx=field[i],dy=field[i+1];
+        let confidence=field[i+2];
+        if(confidence<.08)continue;
+        // Missing reverse coverage is absence of evidence, not zero velocity.
+        // Confident contradictory endpoint matches still reject this path.
+        const opposite=interpolated(reverse,gx+dx*gxScale,gy+dy*gyScale);
+        confidence*=1-smooth(.5,2,Math.hypot(dx+opposite[0],dy+opposite[1]))*smooth(.02,.08,opposite[2]);
+        if(confidence<.08)continue;
+        // Both observed directions contribute at the same temporal midpoint.
+        const mx=gx+.5*dx*gxScale,my=gy+.5*dy*gyScale;
+        for(let y=Math.max(0,Math.floor(my)-radius);y<=Math.min(motion.gridHeight-1,Math.ceil(my)+radius);y++) {
+          for(let x=Math.max(0,Math.floor(mx)-radius);x<=Math.min(motion.gridWidth-1,Math.ceil(mx)+radius);x++) {
+            const distance=(x-mx)**2+(y-my)**2;if(distance>radius*radius)continue;
+            const weight=Math.exp(-distance/2),wc=weight*confidence,j=(y*motion.gridWidth+x)*5;
+            sums[j]+=wc*dx*sign;sums[j+1]+=wc*dy*sign;sums[j+2]+=wc;sums[j+3]+=weight;sums[j+4]+=wc*(dx*dx+dy*dy);
+          }
+        }
+      }
+    }
+    // Conflicting neighbouring trajectories blend instead of defining a warp.
+    const varianceLimit=.5*Math.min(motion.width/motion.gridWidth,motion.height/motion.gridHeight)**2;
+    for(let i=0,j=0;i<common.length;i+=3,j+=5)if(sums[j+2]>1e-8) {
+      const dx=sums[j]/sums[j+2],dy=sums[j+1]/sums[j+2];
+      common[i]=dx;common[i+1]=dy;
+      common[i+2]=sums[j+2]/sums[j+3]*Math.exp(-Math.max(0,sums[j+4]/sums[j+2]-dx*dx-dy*dy)/varianceLimit);
+    }
+    return common;
+  }
+
+  // Self-contained apart from the shared midpoint helper embedded in the worker.
   function computeMotion(a, b, options) {
     const started = Date.now();
     const opts = options || {};
@@ -32,7 +81,7 @@
       difference += Math.abs(aa - ba);
       for (let c = 0; c < 3; c++) difference += Math.abs(a.data[i + c] * aa - b.data[i + c] * ba) / 255;
     }
-    const result = {forward, backward, gridWidth, gridHeight, width, height,
+    const result = {forward, backward, common:new Float32Array(count * 3), gridWidth, gridHeight, width, height,
       maxDisplacement: limit, matchedFraction: 0, mode: 'blend', preparationMs: 0};
     if (difference / (fullWidth * fullHeight) < 0.000001) {
       result.mode = 'stationary'; result.matchedFraction = 1;
@@ -236,6 +285,7 @@
     // A small matched cell still moves even when most of the scene is growing
     // or dissipating. Confidence is applied locally by the renderer.
     result.mode = hasMotion ? 'motion' : 'blend';
+    result.common = computeMidpointField(result);
     result.preparationMs = Date.now() - started;
     return result;
   }
@@ -248,8 +298,8 @@
     precision mediump float;
     #endif
     varying vec2 v_uv;
-    uniform sampler2D u_a,u_b,u_forward,u_backward;
-    uniform vec2 u_work;
+    uniform sampler2D u_a,u_b,u_common;
+    uniform vec2 u_work,u_image;
     uniform float u_limit,u_t,u_mode;
     vec4 imageAt(sampler2D tex,vec2 uv){
       if(uv.x<0.||uv.x>1.||uv.y<0.||uv.y>1.)return vec4(0.);
@@ -264,33 +314,32 @@
       return vec3(movement*u_limit/u_work,v.b);
     }
     vec4 premultiply(vec4 color){return vec4(color.rgb*color.a,color.a);}
+    // Interpolate visible colour in premultiplied space. Straight RGBA
+    // interpolation darkens rain where transparent texels have zeroed RGB.
+    vec4 premultipliedAt(sampler2D tex,vec2 uv){
+      vec2 at=uv*u_image-.5,cell=floor(at),fraction=fract(at),base=(cell+.5)/u_image;
+      vec2 step=1./u_image;
+      vec4 a=premultiply(imageAt(tex,base)),b=premultiply(imageAt(tex,base+vec2(step.x,0.)));
+      vec4 c=premultiply(imageAt(tex,base+vec2(0.,step.y))),d=premultiply(imageAt(tex,base+step));
+      return mix(mix(a,b,fraction.x),mix(c,d,fraction.x),fraction.y);
+    }
     void main(){
       vec4 originalA=imageAt(u_a,v_uv),originalB=imageAt(u_b,v_uv);
       if(u_t<=0.){gl_FragColor=originalA;return;}
       if(u_t>=1.){gl_FragColor=originalB;return;}
       vec4 color=mix(premultiply(originalA),premultiply(originalB),u_t);
-      vec2 pa=v_uv,pb=v_uv;
       if(u_mode>.5){
+        // One inverse map keeps the two observed endpoint samples aligned.
+        vec2 midpoint=v_uv;
         for(int i=0;i<8;i++){
-          pa=mix(pa,v_uv-u_t*flowAt(u_forward,pa).xy,.5);
-          pb=mix(pb,v_uv-(1.-u_t)*flowAt(u_backward,pb).xy,.5);
+          midpoint=mix(midpoint,v_uv-(u_t-.5)*flowAt(u_common,midpoint).xy,.5);
         }
-        vec3 fa=flowAt(u_forward,pa),fb=flowAt(u_backward,pb);
-        float ca=smoothstep(.08,.25,fa.z),cb=smoothstep(.08,.25,fb.z);
-        // Reject inverse solutions that fold or fail to reach this output
-        // pixel, and matches that no longer agree at their actual endpoints.
-        ca*=1.-smoothstep(.5,2.,length((pa+u_t*fa.xy-v_uv)*u_work));
-        cb*=1.-smoothstep(.5,2.,length((pb+(1.-u_t)*fb.xy-v_uv)*u_work));
-        ca*=1.-smoothstep(.5,2.,length((fa.xy+flowAt(u_backward,pa+fa.xy).xy)*u_work));
-        cb*=1.-smoothstep(.5,2.,length((fb.xy+flowAt(u_forward,pb+fb.xy).xy)*u_work));
-        if(ca+cb>.00001){
-          // Either verified direction supplies both observed endpoints of its
-          // match. Missing reverse coverage must not leave a stationary ghost.
-          vec4 fromA=mix(premultiply(imageAt(u_a,pa)),premultiply(imageAt(u_b,pa+fa.xy)),u_t);
-          vec4 fromB=mix(premultiply(imageAt(u_a,pb+fb.xy)),premultiply(imageAt(u_b,pb)),u_t);
-          vec4 warped=(ca*fromA+cb*fromB)/(ca+cb);
-          color=mix(color,warped,max(ca,cb));
-        }
+        vec3 f=flowAt(u_common,midpoint);
+        float confidence=smoothstep(.08,.25,f.z);
+        // Suppress inverse solutions that do not reach this output pixel.
+        confidence*=1.-smoothstep(.5,2.,length((midpoint+(u_t-.5)*f.xy-v_uv)*u_work));
+        vec4 warped=mix(premultipliedAt(u_a,midpoint-.5*f.xy),premultipliedAt(u_b,midpoint+.5*f.xy),u_t);
+        color=mix(color,warped,confidence);
       }
       gl_FragColor=color.a>.00001?vec4(color.rgb/color.a,color.a):vec4(0.);
     }`;
@@ -317,12 +366,12 @@
         this.program = program; this.buffer=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,this.buffer);
         gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,1,1]),gl.STATIC_DRAW);
         this.position=gl.getAttribLocation(program,'a_position'); this.uniforms={};
-        for(const name of ['a','b','forward','backward','work','limit','t','mode'])this.uniforms[name]=gl.getUniformLocation(program,'u_'+name);
-        this.textures=Array.from({length:4},()=>gl.createTexture());
+        for(const name of ['a','b','common','work','image','limit','t','mode'])this.uniforms[name]=gl.getUniformLocation(program,'u_'+name);
+        this.textures=Array.from({length:3},()=>gl.createTexture());
         canvas.addEventListener('webglcontextlost', this._onLost = event => {event.preventDefault();this.supported=false;this._state='context-lost';});
         this.supported=true; this._state='idle';
         if(typeof Worker==='function' && typeof Blob==='function' && typeof URL==='function') {
-          const code='const computeMotion='+computeMotion.toString()+';self.onmessage=function(event){const job=event.data;try{const value=computeMotion(job.a,job.b,job.options);self.postMessage({id:job.id,value:value},[value.forward.buffer,value.backward.buffer]);}catch(error){self.postMessage({id:job.id,error:String(error)});}};';
+          const code='const computeMidpointField='+computeMidpointField.toString()+';const computeMotion='+computeMotion.toString()+';self.onmessage=function(event){const job=event.data;try{const value=computeMotion(job.a,job.b,job.options);self.postMessage({id:job.id,value:value},[value.forward.buffer,value.backward.buffer,value.common.buffer]);}catch(error){self.postMessage({id:job.id,error:String(error)});}};';
           this._workerUrl=URL.createObjectURL(new Blob([code],{type:'application/javascript'}));
           this._worker=new Worker(this._workerUrl);
           this._worker.onmessage=event=>this._finishJob(event.data);
@@ -419,7 +468,8 @@
             bytes[j+2]=Math.round(confidence*255);bytes[j+3]=255;
           }return bytes;
         };
-        upload(2,motion.gridWidth,motion.gridHeight,pack(motion.forward));upload(3,motion.gridWidth,motion.gridHeight,pack(motion.backward));
+
+        upload(2,motion.gridWidth,motion.gridHeight,pack(motion.common));
         this._pair={key,motion};this._state='ready';this._error=null;return true;
       })();
       this._pendingPromise=promise;
@@ -431,8 +481,8 @@
       const gl=this.gl,motion=this._pair.motion;
       gl.viewport(0,0,this.canvas.width,this.canvas.height);gl.useProgram(this.program);gl.disable(gl.BLEND);
       gl.bindBuffer(gl.ARRAY_BUFFER,this.buffer);gl.enableVertexAttribArray(this.position);gl.vertexAttribPointer(this.position,2,gl.FLOAT,false,0,0);
-      ['a','b','forward','backward'].forEach((name,index)=>{gl.activeTexture(gl.TEXTURE0+index);gl.bindTexture(gl.TEXTURE_2D,this.textures[index]);gl.uniform1i(this.uniforms[name],index);});
-      gl.uniform2f(this.uniforms.work,motion.width,motion.height);gl.uniform1f(this.uniforms.limit,motion.maxDisplacement);
+      ['a','b','common'].forEach((name,index)=>{gl.activeTexture(gl.TEXTURE0+index);gl.bindTexture(gl.TEXTURE_2D,this.textures[index]);gl.uniform1i(this.uniforms[name],index);});
+      gl.uniform2f(this.uniforms.work,motion.width,motion.height);gl.uniform2f(this.uniforms.image,this.canvas.width,this.canvas.height);gl.uniform1f(this.uniforms.limit,motion.maxDisplacement);
       gl.uniform1f(this.uniforms.t,t);gl.uniform1f(this.uniforms.mode,motion.mode==='motion'?1:0);
       gl.drawArrays(gl.TRIANGLE_STRIP,0,4);return gl.getError()===gl.NO_ERROR;
     }
@@ -444,5 +494,5 @@
       this._cache.clear();this._inflight.clear();this._pair=null;
     }
   }
-  return {computeMotion,createRenderer,RainMotionRenderer};
+  return {computeMotion,computeMidpointField,createRenderer,RainMotionRenderer};
 });

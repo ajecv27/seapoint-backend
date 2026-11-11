@@ -18,7 +18,7 @@ from playwright.sync_api import sync_playwright
 
 from browser_motion import (
     OUTPUT, fixture_server, open_radar_fixture, png_image,
-    premultiplied_difference, scrub,
+    premultiplied_difference, scrub, strong_components,
 )
 
 
@@ -223,6 +223,138 @@ def check_production_pair(browser, fixture_base):
     print('PASS superseded pair completion cannot replace the latest selected pair textures',flush=True)
 
 
+def check_single_direction_coverage(browser, fixture_base):
+    """A real match still moves when only its reverse coverage is missing.
+
+    Keep the worker's measured translation and confidence, then remove just
+    the opposite direction's confidence and rebuild the shared field through
+    the production helper before its normal texture upload.
+    This models incomplete directional coverage without inventing a velocity.
+    The visible contract is one moving feature, with no stationary fade ghosts.
+    """
+    page=browser.new_page(viewport={'width':390,'height':844})
+    errors=[]
+    page.on('pageerror',lambda error:errors.append(str(error)))
+    page.goto(fixture_base+'/harness',wait_until='load')
+    for direction in ['forward','backward']:
+        result=page.evaluate('''async direction => {
+          create();window.frameA=fixture(80);window.frameB=fixture(112);
+          const key='only-'+direction;
+          const prefetched=await motion.prefetchPair(frameA,frameB,key);
+          if(!prefetched)return {prefetched,ok:false,stats:motion.stats};
+          const field=motion._cache.get(key);
+          const measured=field[direction];
+          let verifiedTranslations=0;
+          for(let i=0;i<measured.length;i+=3)
+            if(measured[i+2]>.25 && Math.abs(Math.abs(measured[i])-16)<3 && Math.abs(measured[i+1])<3)
+              verifiedTranslations++;
+          const missing=direction==='forward'?field.backward:field.forward;
+          for(let i=2;i<missing.length;i+=3)missing[i]=0;
+          field.common=SeaPointRainMotion.computeMidpointField(field);
+          const ok=await motion.preparePair(frameA,frameB,key);
+          return {prefetched,ok,verifiedTranslations,stats:motion.stats};
+        }''',direction)
+        assert result['prefetched'] and result['ok'] and result['stats']['worker'],result
+        assert result['stats']['mode']=='motion' and result['verifiedTranslations']>0,result
+        sources=[png_image(page.evaluate('png(frameA)')),png_image(page.evaluate('png(frameB)'))]
+        frames={t:png_image(page.evaluate('(t)=>draw(t).png',t)) for t in [0,.49,.5,.51,1]}
+        for t,source in [(0,sources[0]),(1,sources[1])]:
+            difference=premultiplied_difference(frames[t],source)
+            assert difference[0]<=1 and difference[1]<=2,{'direction':direction,'difference':difference}
+        components=strong_components(frames[.5])
+        assert len(components)==1,{'direction':direction,'components':len(components),'stats':result}
+        center=sum(x for x,_ in components[0])/len(components[0])
+        alpha=frames[.5].getchannel('A')
+        assert abs(center-96)<=4 and alpha.getpixel((96,128))>=180,{'direction':direction,'center':center,'midpoint_alpha':alpha.getpixel((96,128))}
+        assert max(alpha.getpixel((80,128)),alpha.getpixel((112,128)))<110,{'direction':direction,'error':'Stationary fade ghosts'}
+        endpoint_change=mean_visible_difference(*sources)
+        step_ratio=mean_visible_difference(frames[.49],frames[.51])/endpoint_change
+        assert .001<step_ratio<.18,{'direction':direction,'49_51_ratio':step_ratio}
+        frames[.5].save(OUTPUT/f'smooth-only-{direction}-midpoint.png')
+        page.evaluate('motion.dispose()')
+    assert not errors,errors
+    page.close()
+    print('PASS either worker-verified direction alone moves one strong midpoint feature without fade ghosts, with exact endpoints and 49→51 continuity',flush=True)
+
+
+def check_inconsistent_reverse_rejection(browser, fixture_base):
+    """Confident, contradictory directions must not produce a false midpoint."""
+    page=browser.new_page(viewport={'width':390,'height':844})
+    errors=[]
+    page.on('pageerror',lambda error:errors.append(str(error)))
+    page.goto(fixture_base+'/harness',wait_until='load')
+    result=page.evaluate('''async () => {
+      create();window.frameA=fixture(80);window.frameB=fixture(112);
+      const key='inconsistent-reverse';
+      const prefetched=await motion.prefetchPair(frameA,frameB,key);
+      if(!prefetched)return {prefetched,ok:false,stats:motion.stats};
+      const field=motion._cache.get(key),backward=field.backward;
+      let verifiedContradictions=0;
+      // Preserve the worker's reverse coverage and confidence, but reverse
+      // its measured direction so the two matches cannot describe one motion.
+      for(let i=0;i<backward.length;i+=3){
+        backward[i]*=-1;backward[i+1]*=-1;
+        if(backward[i+2]>.25 && backward[i]>13 && Math.abs(backward[i+1])<3)
+          verifiedContradictions++;
+      }
+      field.common=SeaPointRainMotion.computeMidpointField(field);
+      const ok=await motion.preparePair(frameA,frameB,key);
+      return {prefetched,ok,verifiedContradictions,stats:motion.stats,png:draw(.5).png};
+    }''')
+    assert result['prefetched'] and result['ok'] and result['stats']['worker'],result['stats']
+    assert result['verifiedContradictions']>0,result['verifiedContradictions']
+    image=png_image(result['png'])
+    alpha=image.getchannel('A')
+    assert alpha.getpixel((96,128))<80,{'error':'Contradictory confident matches created a false moving midpoint','midpoint_alpha':alpha.getpixel((96,128))}
+    image.save(OUTPUT/'smooth-inconsistent-reverse-midpoint.png')
+    page.evaluate('motion.dispose()')
+    assert not errors,errors
+    page.close()
+    print('PASS confident contradictory reverse matches reject the false moving midpoint',flush=True)
+
+
+def check_independent_motion_cells(browser, fixture_base):
+    """Two measured local motions must keep their separate destinations."""
+    page=browser.new_page(viewport={'width':390,'height':844})
+    errors=[]
+    page.on('pageerror',lambda error:errors.append(str(error)))
+    page.goto(fixture_base+'/harness',wait_until='load')
+    result=page.evaluate('''async () => {
+      create();
+      function cells(a,b){
+        for(let i=0;i<a.data.length;i+=4)if(b.data[i+3])
+          for(let c=0;c<4;c++)a.data[i+c]=b.data[i+c];
+        return a;
+      }
+      window.frameA=cells(fixture(64,80),fixture(192,176));
+      window.frameB=cells(fixture(96,80),fixture(160,176));
+      const ok=await motion.preparePair(frameA,frameB,'opposite-local-motions');
+      return {ok,stats:motion.stats};
+    }''')
+    assert result['ok'] and result['stats']['worker'] and result['stats']['mode']=='motion',result
+    sources=[png_image(page.evaluate('png(frameA)')),png_image(page.evaluate('png(frameB)'))]
+    frames={t:png_image(page.evaluate('(t)=>draw(t).png',t)) for t in [0,.49,.5,.51,1]}
+    for t,source in [(0,sources[0]),(1,sources[1])]:
+        difference=premultiplied_difference(frames[t],source)
+        assert difference[0]<=1 and difference[1]<=2,difference
+    components=strong_components(frames[.5])
+    assert len(components)==2,{'components':len(components),'stats':result}
+    centers=sorted((sum(x for x,_ in points)/len(points),sum(y for _,y in points)/len(points)) for points in components)
+    for center,target in zip(centers,[(80,80),(176,176)]):
+        assert abs(center[0]-target[0])<=4 and abs(center[1]-target[1])<=4,{'center':center,'target':target}
+    alpha=frames[.5].getchannel('A')
+    for cx,cy,start,end in [(80,80,64,96),(176,176,192,160)]:
+        assert alpha.getpixel((cx,cy))>=180,{'point':[cx,cy],'alpha':alpha.getpixel((cx,cy))}
+        assert max(alpha.getpixel((start,cy)),alpha.getpixel((end,cy)))<110,{'error':'Stationary local fade ghosts','point':[cx,cy]}
+    ratio=mean_visible_difference(frames[.49],frames[.51])/mean_visible_difference(*sources)
+    assert .001<ratio<.18,{'49_51_ratio':ratio}
+    frames[.5].save(OUTPUT/'smooth-opposite-local-motions-midpoint.png')
+    page.evaluate('motion.dispose()')
+    assert not errors,errors
+    page.close()
+    print('PASS independent rain cells move in opposite directions to two strong midpoint features, with exact endpoints and continuous timing',flush=True)
+
+
 def inspect_field(page):
     return page.evaluate('''() => {
       const s=seapointMotionState(), b=rainMotionOverlay._bounds;
@@ -368,6 +500,9 @@ def main():
         browser=playwright.chromium.launch(executable_path=os.environ.get('CHROMIUM_PATH','/usr/bin/chromium'),headless=True,
             args=['--no-sandbox','--enable-unsafe-swiftshader','--use-gl=angle','--use-angle=swiftshader'])
         check_production_pair(browser,fixture_base)
+        check_single_direction_coverage(browser,fixture_base)
+        check_inconsistent_reverse_rejection(browser,fixture_base)
+        check_independent_motion_cells(browser,fixture_base)
         if os.environ.get('SEAPOINT_MOTION_MODULE_ONLY')!='1':
             check_full_map_and_prefetch(browser,fixture_base,sources)
             check_buffered_clock(browser,fixture_base)
