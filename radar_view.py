@@ -99,11 +99,13 @@ const timeFormatter=new Intl.DateTimeFormat('en-US',{timeZone:'America/Antigua',
 const format=t=>timeFormatter.format(new Date(t*1000));
 let observed=[],forecast=[],active=[],radarFrames=[],predictionFrames=[],playing=false,position=0,lastTick=0,holdUntil=0,holdAction='',loading=false,revision=0;
 let timelineStart=0,timelineEnd=0,firstPlay=true;
-let forecastMeta=null,forecastRetry=null,visibleLayers=new Set();
+let forecastMeta=null,forecastRetry=null,visibleLayers=new Set(),forecastState='preparing',forecastEverPublished=false,forecastMetadataHealthy=false;
+let activationPromise=null,activationQueued=false,observedLoading=false,forecastRetryRequested=false,lastRecovery=0;
+const FORECAST_RETRY_MS=15000,FORECAST_DEADLINE_MS=45000;
 let lastLegendKind='',lastDetail='',mapStatus='LOADING';
 function setMapStatus(value){mapStatus=value;map.getContainer().dataset.status=value;}
 const loaded=new Map(),pending=new Map();
-const key=f=>f.kind+':'+f.time+':'+f.url;
+const key=f=>f.kind+':'+(f.model_run||'')+':'+f.time+':'+f.url;
 const radarTileSize=window.devicePixelRatio>=2?512:256;
 // Only one full-resolution pair is uploaded to the GPU. Flow fields are kept
 // in a bounded worker cache; no extra forecast images are generated or fetched.
@@ -134,7 +136,7 @@ async function captureRainFrame(frame,layer){
  if(frame.kind==='forecast'){
   const image=layer.getElement();if(!image||!image.naturalWidth)throw new Error('Forecast image unavailable');
   canvas.width=image.naturalWidth;canvas.height=image.naturalHeight;ctx.drawImage(image,0,0);
-  return {pixels:ctx.getImageData(0,0,canvas.width,canvas.height),bounds:forecastMeta.bounds};
+  return {pixels:ctx.getImageData(0,0,canvas.width,canvas.height),bounds:frame.bounds||forecastMeta.bounds};
  }
  // A new zoom starts downloading tiles before moveend. Capture only after
  // that load settles, so slow tiles do not disable movement for this view.
@@ -157,7 +159,7 @@ async function captureRainFrame(frame,layer){
 function prefetchFollowingMotion(a,b){
  if(!playing||motionPrefetch||!rainMotionRenderer||!rainMotionRenderer.prefetchPair||motionViewChanging)return;
  const pool=b.kind==='forecast'?predictionFrames:radarFrames,index=pool.indexOf(b),next=pool[index+1];
- if(!next||next.kind!==b.kind||next.time-b.time>(b.kind==='observed'?900:5400))return;
+ if(!next||next.kind!==b.kind||next.time-b.time>(b.kind==='observed'?900:5400)||(b.kind==='forecast'&&next.model_run!==b.model_run))return;
  const id=motionPairKey(b,next);if(motionPrefetchedKeys.has(id))return;
  const first=loaded.get(key(b)),second=loaded.get(key(next));if(!first||!second)return;
  motionPrefetchedKeys.add(id);while(motionPrefetchedKeys.size>8)motionPrefetchedKeys.delete(motionPrefetchedKeys.values().next().value);
@@ -196,7 +198,7 @@ function renderMotionPair(a,b,first,second,blend){
 }
 map.on('movestart zoomstart',()=>{motionViewChanging=true;hideRainMotion();if(active.length)render();});
 map.on('moveend zoomend',()=>{motionViewChanging=false;motionViewRevision++;motionWanted=null;hideRainMotion();if(active.length)render();});
-window.addEventListener('pagehide',()=>{if(rainMotionRenderer)rainMotionRenderer.dispose();readableTiles.clear();});
+window.addEventListener('pagehide',event=>{if(!event.persisted&&rainMotionRenderer)rainMotionRenderer.dispose();readableTiles.clear();});
 
 window.seapointToggleInfo=()=>showInfo($('source-panel').hidden);
 window.seapointUseNativeInfo=()=>{$('info-toggle').hidden=true;};
@@ -204,6 +206,33 @@ function notify(){if(window.SeaPointRadar)window.SeaPointRadar.postMessage('read
 notify();
 function announce(message){$('availability').textContent=message;}
 function observationEnd(){return radarFrames.length?radarFrames.at(-1).time:-Infinity;}
+function validForecastFrame(frame,now=Date.now()/1000){
+ return Number.isFinite(frame.model_run)&&now-frame.model_run>=-60&&now-frame.model_run<24*3600&&frame.time>=now-3600&&frame.time<=Math.ceil(now/3600)*3600+48*3600;
+}
+function forecastCoverageComplete(){
+ if(!forecastMeta||forecastMeta.coverage_complete===false||!forecast.length||!predictionFrames.some(f=>f.time>Date.now()/1000))return false;
+ const ready=new Set(predictionFrames.map(key));
+ return forecast[0].time<=Date.now()/1000+60&&forecast.every((frame,i)=>validForecastFrame(frame)&&ready.has(key(frame))&&(!i||frame.time-forecast[i-1].time<=5400))&&predictionFrames.at(-1).time>=Date.now()/1000+48*3600;
+}
+function updateForecastStatus(){
+ const future=predictionFrames.filter(frame=>validForecastFrame(frame)&&frame.time>Date.now()/1000);
+ if(future.length){
+  const end=Math.min(timelineEnd,future.at(-1).time);
+  announce(forecastState==='reconnecting'?'Forecast update unavailable; retaining loaded forecast through '+format(end)+'. Retrying automatically…':'Forecast available through '+format(end)+' · hourly data with display motion interpolation.'+(forecastCoverageComplete()?'':' Updating forecast coverage…'));
+  const runs=[...new Set(predictionFrames.map(frame=>frame.model_run))].sort((a,b)=>a-b);
+  $('model-run').textContent=(runs.length>1?'Forecast model runs: ':'Forecast model run: ')+runs.map(format).join(' / ')+' Antigua time.';
+ }else{
+  announce(forecastState==='preparing'?'Preparing the 48-hour forecast.':'Forecast temporarily unavailable. Reconnecting automatically…');
+  $('model-run').textContent='';
+ }
+ lastDetail='';if(active.length)render();
+}
+function scheduleForecastRetry(){
+ if(forecastMetadataHealthy&&forecastCoverageComplete()){clearTimeout(forecastRetry);forecastRetry=null;return;}
+ if(forecastRetry!==null)return;
+ forecastRetry=setTimeout(()=>{forecastRetry=null;loadForecast();},FORECAST_RETRY_MS);
+}
+window.seapointForecastState=()=>({loading,retryScheduled:forecastRetry!==null,state:forecastState,frameCount:predictionFrames.length,coverageComplete:forecastCoverageComplete(),metadataHealthy:forecastMetadataHealthy});
 function setPlaying(value){
  playing=value;lastTick=0;holdUntil=0;holdAction='';
  if(value&&active.length){
@@ -220,7 +249,7 @@ function frameLayer(frame){
   const finish=ok=>{if(settled)return;settled=true;clearTimeout(timeout);if(ok){loaded.set(id,layer);resolve(layer);}else{if(layer)map.removeLayer(layer);reject(new Error('Map frame unavailable'));}};
   const timeout=setTimeout(()=>finish(false),25000);
   if(frame.kind==='forecast'){
-   layer=L.imageOverlay(frame.url,forecastMeta.bounds,{opacity:0,interactive:false,attribution:'Forecast: NOAA GFS'});
+   layer=L.imageOverlay(frame.url,frame.bounds||forecastMeta.bounds,{opacity:0,interactive:false,attribution:'Forecast: NOAA GFS'});
    layer.once('load',()=>finish(true));layer.once('error',()=>finish(false));
   }else{
    layer=L.tileLayer(frame.url,{opacity:0,tileSize:256,maxNativeZoom:7,maxZoom:12,className:'rain-overlay',attribution:'Radar: RainViewer'});
@@ -235,7 +264,7 @@ function frameLayer(frame){
  });pending.set(id,task);task.finally(()=>pending.delete(id)).catch(()=>{});return task;
 }
 function cleanLayers(){
- const keep=new Set([...observed,...forecast].map(key));
+ const keep=new Set([...observed,...forecast,...radarFrames,...predictionFrames].map(key));
  for(const [id,layer]of loaded)if(!keep.has(id)&&!visibleLayers.has(layer)){map.removeLayer(layer);loaded.delete(id);}
 }
 function legend(kind){
@@ -247,7 +276,7 @@ function render(){
  motionBuffered=false;
  if(!active.length)return false;
  const kind=radarFrames.length&&position<=observationEnd()?'observed':'forecast';
- const pool=kind==='observed'?radarFrames:predictionFrames;
+ const pool=kind==='observed'?radarFrames:predictionFrames.some(frame=>validForecastFrame(frame)&&frame.time>Date.now()/1000)?predictionFrames.filter(frame=>validForecastFrame(frame)):[];
  $('timeline').value=String(Math.round(position));$('clock').textContent=format(position);
  if(!pool.length||position<pool[0].time||position>pool.at(-1).time){
   hideRainMotion();motionWanted=null;
@@ -261,12 +290,16 @@ function render(){
  const blend=b.time>a.time?Math.max(0,Math.min(1,(position-a.time)/(b.time-a.time))):1;
  const shown=blend<.5?a:b;
  const first=loaded.get(key(a)),second=loaded.get(key(b));
- if(!first||!second){$('notice').textContent='Buffering weather frames…';$('notice').hidden=false;return false;}
+ const gap=b.time-a.time;
+ if(!first||!second||(position>a.time&&position<b.time&&gap>(kind==='observed'?900:5400))){
+  hideRainMotion();motionWanted=null;for(const layer of visibleLayers)layer.setOpacity(0);visibleLayers.clear();
+  setMapStatus('GAP');$('detail').textContent='Weather frame unavailable · retrying';lastDetail='';
+  $('notice').textContent='No frame available at the selected time';$('notice').hidden=false;return true;
+ }
  const next=new Set([first,second]);for(const layer of visibleLayers)if(!next.has(layer))layer.setOpacity(0);
  // Original timestamps show the actual image. Verified patterns move;
  // weak matches grow/dissipate continuously rather than jumping at halfway.
- const gap=b.time-a.time;
- const canInterpolate=a!==b && gap>0 && gap<=(kind==='observed'?900:5400) && blend>0 && blend<1;
+ const canInterpolate=a!==b && gap>0 && gap<=(kind==='observed'?900:5400) && (kind!=='forecast'||a.model_run===b.model_run) && blend>0 && blend<1;
  if(!canInterpolate || !renderMotionPair(a,b,first,second,blend)){
   hideRainMotion();
   if(first===second){first.setOpacity(.78);}
@@ -279,10 +312,11 @@ function render(){
   }else{const actual=blend<.5?first:second;first.setOpacity(actual===first ? .78 : 0);second.setOpacity(actual===second ? .78 : 0);}
  }
  visibleLayers=next;setMapStatus(kind==='forecast'?'FORECAST':'OBSERVED');
- const detail=kind==='forecast'?'Forecast rain · hourly model':'Observed radar · '+format(shown.time);
+ const waiting=!predictionFrames.some(frame=>validForecastFrame(frame)&&frame.time>Date.now()/1000);
+ const detail=kind==='forecast'?'Forecast rain · hourly model':waiting?'Radar · '+(forecastState==='preparing'?'Preparing 48-hour forecast…':'Reconnecting forecast…'):'Observed radar · '+format(shown.time);
  if(detail!==lastDetail){$('detail').textContent=detail;lastDetail=detail;}
  legend(kind);
- const outside=kind==='forecast'&&!L.latLngBounds(forecastMeta.bounds).intersects(map.getBounds());
+ const outside=kind==='forecast'&&!L.latLngBounds(shown.bounds||forecastMeta.bounds).intersects(map.getBounds());
  $('notice').hidden=!outside&&!motionBuffered;if(outside)$('notice').textContent='Outside the eastern Caribbean forecast coverage';else if(motionBuffered)$('notice').textContent='Preparing smooth rain playback…';
  return !motionBuffered;
 }
@@ -291,45 +325,71 @@ function updateNowMarker(){
  $('now-marker').hidden=!Number.isFinite(fraction)||fraction<0||fraction>1;
  if(!$('now-marker').hidden)$('now-marker').style.left=(fraction*100)+'%';
 }
-async function activate(){
- const token=++revision;
- const candidatesObserved=observed.slice().sort((a,b)=>a.time-b.time);
- const candidatesForecast=forecast.slice().sort((a,b)=>a.time-b.time);
- const all=[...candidatesObserved,...candidatesForecast];
- if(!all.length){
-  if(active.length)return; // A transient metadata failure must not erase usable images.
-  setMapStatus('UNAVAILABLE');$('clock').textContent='No frames available';$('detail').textContent='';
-  $('notice').textContent='Weather frames temporarily unavailable';$('notice').hidden=false;
-  $('play').disabled=$('timeline').disabled=$('jump-latest').disabled=true;return;
- }
- if(!active.length){$('notice').textContent='Preparing weather playback…';$('notice').hidden=false;}
- const results=[];
- for(let i=0;i<all.length;i+=4){
-  results.push(...await Promise.allSettled(all.slice(i,i+4).map(frameLayer)));
-  if(token!==revision)return;
- }
- const failedKinds=new Set(all.filter((f,i)=>results[i].status==='rejected').map(f=>f.kind));
- const readyObserved=failedKinds.has('observed')?[]:candidatesObserved;
- const readyForecast=failedKinds.has('forecast')?[]:candidatesForecast;
+function publishReadyFrames(finished=false){
+ const now=Date.now()/1000;
+ const readyObserved=observed.filter(frame=>frame.time>=now-3*3600&&loaded.has(key(frame))).sort((a,b)=>a.time-b.time);
+ // Keep valid downloaded images during a failed update. A successful image
+ // replaces only its own timestamp; different model runs never morph together.
+ const byTime=new Map(predictionFrames.filter(frame=>validForecastFrame(frame,now)&&loaded.has(key(frame))).map(frame=>[frame.time,frame]));
+ for(const frame of forecast)if(validForecastFrame(frame,now)&&loaded.has(key(frame)))byTime.set(frame.time,frame);
+ let readyForecast=[...byTime.values()].sort((a,b)=>a.time-b.time);
+ if(!readyForecast.some(frame=>frame.time>now))readyForecast=[];
  const cutoff=readyObserved.length?readyObserved.at(-1).time:-Infinity;
- const combined=[...readyObserved,...readyForecast.filter(f=>f.time>cutoff)].sort((a,b)=>a.time-b.time);
- if(!combined.length){
-  if(active.length){announce('Weather update unavailable; retaining loaded images.');return;}
-  setMapStatus('UNAVAILABLE');$('clock').textContent='Playback unavailable';$('notice').textContent='Weather images unavailable. Retry shortly.';$('notice').hidden=false;return;
- }
- const hadFrames=active.length>0;
+ const combined=[...readyObserved,...readyForecast.filter(frame=>frame.time>cutoff)].sort((a,b)=>a.time-b.time);
+ const hadFrames=active.length>0,changed=active.map(key).join(',')!==combined.map(key).join(',');
  radarFrames=readyObserved;predictionFrames=readyForecast;active=combined;
- timelineStart=radarFrames.length?radarFrames[0].time:Math.max(Date.now()/1000,predictionFrames[0].time);
- timelineEnd=predictionFrames.length?Math.min(forecastMeta.forecast_until||Date.now()/1000+48*3600,predictionFrames.at(-1).time):observationEnd();
+ if(!active.length){
+  hideRainMotion();motionWanted=null;for(const layer of visibleLayers)layer.setOpacity(0);visibleLayers.clear();
+  if(finished){
+   setPlaying(false);setMapStatus('UNAVAILABLE');$('clock').textContent='Playback unavailable';
+   $('detail').textContent=forecastState==='preparing'?'Preparing 48-hour forecast…':'Reconnecting forecast…';
+   $('notice').textContent='Weather images unavailable. Retrying automatically…';$('notice').hidden=false;
+  }
+  $('play').disabled=$('timeline').disabled=$('jump-latest').disabled=true;
+  cleanLayers();updateForecastStatus();return;
+ }
+ timelineStart=radarFrames.length?radarFrames[0].time:Math.max(now,predictionFrames[0].time);
+ const endpoint=predictionFrames.at(-1);
+ timelineEnd=endpoint?Math.min(endpoint.forecast_until||now+48*3600,endpoint.time):observationEnd();
  if(timelineEnd<timelineStart)timelineEnd=timelineStart;
  if(!hadFrames||(firstPlay&&radarFrames.length&&!playing))position=radarFrames.length?observationEnd():timelineStart;
  position=Math.min(timelineEnd,Math.max(timelineStart,position));
+ if(changed){
+  revision++;
+  const published=new Set([...radarFrames,...predictionFrames].map(key));
+  if(motionWanted&&(!published.has(key(motionWanted.a))||!published.has(key(motionWanted.b)))){motionWanted=null;hideRainMotion();}
+ }
  $('timeline').min=String(Math.floor(timelineStart));$('timeline').max=String(Math.floor(timelineEnd));
  $('start').textContent=format(timelineStart);$('end').textContent=format(timelineEnd);
- $('timeline').disabled=timelineEnd<=timelineStart;$('play').disabled=timelineEnd<=timelineStart;$('jump-latest').disabled=false;
+ $('timeline').disabled=$('play').disabled=timelineEnd<=timelineStart;$('jump-latest').disabled=false;
+ if(timelineEnd<=timelineStart&&playing)setPlaying(false);
  $('jump-latest').setAttribute('aria-label','Go to now');
- updateNowMarker();cleanLayers();lastDetail='';render();
- if(failedKinds.size)announce('One weather source is unavailable; showing the available coverage.');
+ if(predictionFrames.some(frame=>frame.time>now))forecastEverPublished=true;
+ if(forecastMetadataHealthy&&forecastCoverageComplete())forecastState='ready';
+ updateNowMarker();updateForecastStatus();cleanLayers();
+}
+function activate(){
+ if(activationPromise){activationQueued=true;return activationPromise;}
+ activationQueued=false;
+ const orderedForecast=forecast.slice().sort((a,b)=>a.time-b.time);
+ // Get the near-now frames and the actual endpoint early, without increasing
+ // the four-image download limit. Unloaded intervals stay visibly unavailable.
+ const preferred=[...orderedForecast.slice(0,3),...orderedForecast.slice(-1),...orderedForecast.slice(3,-1)];
+ const seen=new Set(),queue=[...observed.slice().sort((a,b)=>a.time-b.time),...preferred].filter(frame=>{const id=key(frame);if(seen.has(id)||loaded.has(id))return false;seen.add(id);return true;});
+ publishReadyFrames();
+ const worker=async()=>{
+  while(queue.length){
+   const frame=queue.shift(),id=key(frame);
+   if(![...observed,...forecast].some(candidate=>key(candidate)===id))continue;
+   try{await frameLayer(frame);}catch(_){if(frame.kind==='forecast')forecastState='reconnecting';}
+   publishReadyFrames();
+  }
+ };
+ activationPromise=Promise.all(Array.from({length:Math.min(4,queue.length)},worker)).finally(()=>{
+  activationPromise=null;publishReadyFrames(true);scheduleForecastRetry();
+  if(activationQueued){activationQueued=false;activate();}
+ });
+ return activationPromise;
 }
 $('play').onclick=()=>setPlaying(!playing);
 $('timeline').oninput=()=>{setPlaying(false);firstPlay=false;position=Number($('timeline').value);render();};
@@ -338,7 +398,7 @@ function tick(ms){
   if(lastTick){
    if(holdUntil){
     if(ms>=holdUntil){
-     position=holdAction==='forecast'?Math.max(observationEnd()+1,predictionFrames[0].time):timelineStart;
+     position=holdAction==='forecast'&&predictionFrames.length?Math.max(observationEnd()+1,predictionFrames[0].time):timelineStart;
      holdUntil=0;holdAction='';render();
     }
    }else{
@@ -358,33 +418,61 @@ function tick(ms){
  }else lastTick=0;
  requestAnimationFrame(tick);
 }requestAnimationFrame(tick);
-document.addEventListener('visibilitychange',()=>{if(document.hidden)setPlaying(false);});
+async function fetchWeatherJson(url,deadline){
+ const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),deadline);
+ try{
+  const response=await fetch(url,{signal:controller.signal,cache:'no-store'});
+  const data=await response.json();return {response,data};
+ }finally{clearTimeout(timer);}
+}
 async function loadObserved(){
+ if(observedLoading)return;observedLoading=true;
  const previous=observed.map(key).join(',');
  try{
-  const response=await fetch('/radar-frames');if(!response.ok)throw new Error();const data=await response.json();
+  const {response,data}=await fetchWeatherJson('/radar-frames',30000);if(!response.ok||!Array.isArray(data.frames))throw new Error();
   const now=Date.now()/1000;
-  observed=(data.frames||[]).filter(f=>Number.isFinite(f.time)&&f.path&&f.time<=now+60&&f.time>=now-3*3600).slice(-8).map(f=>({kind:'observed',time:f.time,url:(data.host||'https://tilecache.rainviewer.com')+f.path+'/'+radarTileSize+'/{z}/{x}/{y}/2/1_1.png'}));
- }catch(_){observed=[];announce('Observed radar unavailable; forecast may still be available.');}
- if(previous!==observed.map(key).join(',')||!radarFrames.length)await activate();
+  observed=data.frames.filter(f=>Number.isFinite(f.time)&&f.path&&f.time<=now+60&&f.time>=now-3*3600).slice(-8).map(f=>({kind:'observed',time:f.time,url:(data.host||'https://tilecache.rainviewer.com')+f.path+'/'+radarTileSize+'/{z}/{x}/{y}/2/1_1.png'}));
+ }catch(_){observed=observed.filter(frame=>frame.time>=Date.now()/1000-3*3600);}
+ finally{observedLoading=false;}
+ if(previous!==observed.map(key).join(',')||!radarFrames.length)activate();
 }
 async function loadForecast(){
- if(loading)return;loading=true;
+ if(loading){forecastRetryRequested=true;return;}
+ loading=true;forecastRetryRequested=false;clearTimeout(forecastRetry);forecastRetry=null;
  try{
-  const response=await fetch('/forecast-frames');const data=await response.json();
-  if(response.status===202){announce('Preparing the 48-hour forecast. Radar remains available.');clearTimeout(forecastRetry);forecastRetry=setTimeout(loadForecast,15000);return;}
-  if(!response.ok||data.status!=='ready')throw new Error();
-  forecastMeta=data;const now=Date.now()/1000;
-  const upcoming=(data.frames||[]).filter(f=>Number.isFinite(f.time)&&f.url&&f.time>=now-3600&&f.time<=Math.ceil(now/3600)*3600+48*3600).map(f=>({...f,kind:'forecast'}));
-  if(upcoming.length<2)throw new Error();
-  const changed=upcoming.map(key).join(',')!==forecast.map(key).join(',');forecast=upcoming;
-  announce('Forecast available through '+format(forecast.at(-1).time)+' · hourly data with display motion interpolation.');
-  $('model-run').textContent='Forecast model run: '+format(data.model_run)+' Antigua time.';
-  if(changed||!predictionFrames.length)await activate();
- }catch(_){announce(forecast.length?'Forecast update unavailable; retaining cached forecast through '+format(forecast.at(-1).time):'Forecast temporarily unavailable. Observed radar remains available.');}
- finally{loading=false;}
+  // Render may need a cold start. Bound both headers and JSON parsing while
+  // giving that startup time to finish; an aborted request retries itself.
+  const {response,data}=await fetchWeatherJson('/forecast-frames',FORECAST_DEADLINE_MS);
+  if(response.status===202){forecastMetadataHealthy=false;forecastState=forecastEverPublished?'reconnecting':'preparing';publishReadyFrames(!activationPromise);return;}
+  if(!response.ok||data.status!=='ready'||!Array.isArray(data.frames)||!Array.isArray(data.bounds)||data.bounds.length!==2||data.bounds.some(point=>!Array.isArray(point)||point.length!==2||!point.every(Number.isFinite))||!Number.isFinite(data.model_run)||(data.forecast_until!==undefined&&!Number.isFinite(data.forecast_until)))throw new Error();
+  const now=Date.now()/1000;
+  const upcoming=data.frames.map(f=>({...f,kind:'forecast',model_run:data.model_run,bounds:data.bounds,forecast_until:data.forecast_until})).filter(f=>Number.isFinite(f.time)&&f.url&&validForecastFrame(f,now));
+  if(upcoming.length<2||!upcoming.some(frame=>frame.time>now)||(data.forecast_until!==undefined&&data.forecast_until<=now))throw new Error();
+  forecastMetadataHealthy=true;forecastMeta=data;forecast=upcoming.sort((a,b)=>a.time-b.time);
+  forecastState=forecastEverPublished?'updating':'preparing';
+  // A ready manifest does not mean its images have arrived. The activation
+  // drain publishes each successful image and retries holes in an unchanged run.
+  activate();updateForecastStatus();
+ }catch(_){
+  forecastMetadataHealthy=false;forecastState='reconnecting';forecast=forecast.filter(frame=>validForecastFrame(frame));
+  publishReadyFrames(!activationPromise);updateForecastStatus();
+ }finally{
+  loading=false;
+  if(forecastRetryRequested||!forecastMetadataHealthy||!forecastCoverageComplete())scheduleForecastRetry();
+ }
 }
-loadObserved();loadForecast();setInterval(loadObserved,300000);setInterval(loadForecast,900000);setInterval(updateNowMarker,60000);
+function refreshAfterResume(){
+ const now=Date.now();if(now-lastRecovery<3000)return;lastRecovery=now;
+ publishReadyFrames();loadObserved();loadForecast();
+}
+// These run inside the hosted page, so a phone recovers independently of the
+// original laptop or a native WebView lifecycle callback.
+document.addEventListener('visibilitychange',()=>{if(document.hidden)setPlaying(false);else refreshAfterResume();});
+window.addEventListener('online',refreshAfterResume);
+window.addEventListener('pageshow',refreshAfterResume);
+window.addEventListener('focus',()=>{if(!document.hidden)refreshAfterResume();});
+loadObserved();loadForecast();setInterval(loadObserved,300000);setInterval(loadForecast,900000);
+setInterval(()=>{publishReadyFrames(!loading&&!activationPromise);updateNowMarker();scheduleForecastRetry();},60000);
 $('zoom-in').onclick=()=>map.zoomIn();$('zoom-out').onclick=()=>map.zoomOut();
 $('recenter').onclick=()=>map.setView([config.lat,config.lon],10.5);
 $('jump-latest').onclick=()=>{if(!active.length)return;setPlaying(false);firstPlay=false;position=radarFrames.length?observationEnd():Math.min(timelineEnd,Math.max(Date.now()/1000,timelineStart));render();};

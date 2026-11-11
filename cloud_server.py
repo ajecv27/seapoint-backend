@@ -1846,6 +1846,9 @@ print(
     f"SeaPoint backend running on port {PORT}"
 )
 
+# Prepare forecasts without delaying HTTP startup or the first radar request.
+FORECAST_MAPS.snapshot()
+
 ThreadingHTTPServer(
     (
         "0.0.0.0",

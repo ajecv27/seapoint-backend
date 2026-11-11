@@ -38,16 +38,29 @@ Keep the current `python cloud_server.py` start command and install the updated
 on supported Linux platforms. The added dependencies are NumPy, Pillow, and
 ecCodes; no NOAA or OpenWeather key is needed for the forecast maps.
 
-The forecast is prepared in a background thread on the first request. During
+The server starts preparing the forecast in a background thread at startup,
+without waiting for the first radar request or delaying HTTP startup. During
 preparation `/forecast-frames` returns HTTP 202; the player keeps radar available
 and checks again after 15 seconds. The first build downloads/decompresses 50
 precipitation records and can take longer on a small Render instance. Frames are
 reused from disk, and failed updates back off for five minutes. A prior forecast
-is retained only while its model run is less than 24 hours old.
+is retained only while its model run is less than 24 hours old. The returned
+`forecast_until` is capped at the last available image; `coverage_complete` says
+whether the full requested 48-hour horizon is currently covered.
+
+After a successful full build, the server atomically saves `manifest.json` before
+publishing the new forecast in memory. A restart can immediately serve a valid
+local manifest while refreshing or extending coverage in the background. Restore
+checks bound manifest size and frame count, validate NOAA metadata, model-run and
+hourly timestamps, require matching local image URLs, and verify every PNG.
+Expired, malformed, missing, corrupt, oversized, or symlinked cache entries are
+ignored. Failed manifest publication retains the previous disk and memory copies.
 
 `SEAPOINT_FORECAST_CACHE` optionally sets a writable cache directory; the default
-is `forecast-cache/` beside the module. Ephemeral storage works, but restarts or
-new instances may regenerate images. Processing and outbound data still consume
+is `forecast-cache/` beside the module. Cache reuse requires the same filesystem;
+an ephemeral filesystem reset or a new instance still regenerates images.
+An idle-host wake-up may also delay the initial response; the hosting plan and
+its sleep behavior have not been verified here. Processing and outbound data still consume
 hosting resources even though the data requires no subscription. Two-day-old
 images are cleaned up. The endpoints are:
 
@@ -119,10 +132,36 @@ and the trailing Go to now action help return to current conditions. Observation
 and prediction images are never crossfaded into one another; a source gap is
 shown explicitly as unavailable rather than clear weather.
 
-The backend returns an hourly image bracketing the exact `forecast_until` time
-(now plus 48 hours), and the slider ends at that timestamp. Fifty cached hourly
+With complete coverage, the backend returns an hourly image bracketing the exact
+`forecast_until` time (now plus 48 hours), and the slider ends at that timestamp.
+If an update fails, the slider ends at the actual remaining coverage. Fifty cached hourly
 images support this horizon. Extensions reuse images and fetch only new records.
 The existing Android WebView loads this change without another app rebuild.
+
+## Forecast recovery on the phone
+
+The hosted page retries failed forecast metadata and missing images after
+15 seconds, including network errors, unavailable responses and malformed JSON.
+A request deadline prevents a stalled connection from blocking later attempts.
+Returning to the app or reconnecting also refreshes the data on the same page.
+Existing complete images remain usable during a failed update, within their
+original model age and timestamps.
+
+Observed radar becomes playable while forecast images download. Successfully
+loaded forecast hours appear progressively; one missing image no longer removes
+the entire forecast. The slider ends at the coverage actually loaded. Missing
+intervals are identified as unavailable, and different model runs are not
+interpolated into each other. Missing hours are retried even when the manifest
+has not changed. The compact playback detail shows forecast preparation or
+reconnection while only observations are available.
+
+These changes run on the public backend page. Close and reopen Rain Radar on
+the phone to load the updated page; a laptop connection is not required. The
+phone still needs an internet connection to fetch new weather data.
+
+`SEAPOINT_TEST_URL=http://127.0.0.1:8772 python tests/browser_forecast_recovery.py`
+exercises isolated network failures, partial images, browser resume events,
+retained forecasts and expiry during the observation-to-forecast handoff.
 
 ## Playback polish
 
