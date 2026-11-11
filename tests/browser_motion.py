@@ -299,7 +299,7 @@ def open_radar_fixture(browser, fixture_base, cors=True, forecast_gap=False, web
         'version':8,'sources':{},'layers':[{'id':'test-background','type':'background','paint':{'background-color':'#183d63'}}]}))
     page.route('https://server.arcgisonline.com/**',lambda route:route.fulfill(body=PNG,content_type='image/png'))
     page.goto(BASE_URL+'/radar?lat=17.12&lon=-61.8&name=Motion%20test',wait_until='domcontentloaded',timeout=60000)
-    page.wait_for_function('radarFrames.length===8&&predictionFrames.length>=48&&!document.getElementById("play").disabled',timeout=60000)
+    page.wait_for_function('radarFrames.length===8&&predictionFrames.length>=48&&predictionFrames.length===forecast.length&&pending.size===0&&!document.getElementById("play").disabled',timeout=60000)
     page.wait_for_function('typeof window.seapointMotionState==="function"',timeout=10000)
     return page, observed, future
 

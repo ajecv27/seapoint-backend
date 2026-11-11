@@ -1,6 +1,7 @@
 """Regional forecast images from public NOAA GFS; no weather API key needed."""
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
+import json
 import logging
 import math
 import os
@@ -18,6 +19,9 @@ BOUNDS = [[10.0, -68.0], [23.0, -55.0]]
 HOST = 'https://noaa-gfs-bdp-pds.s3.amazonaws.com'
 LOG = logging.getLogger(__name__)
 HORIZON_HOURS = 48
+MANIFEST_NAME = 'manifest.json'
+MAX_MANIFEST_BYTES = 32_768
+MAX_IMAGE_BYTES = 4_000_000
 
 
 def read_url(url, byte_range=None):
@@ -111,6 +115,84 @@ class ForecastMaps:
         self.retry_after = 0
         self.manifest = None
         self.generation = None
+        self._restore()
+
+    @staticmethod
+    def _valid_png(data):
+        if not 0 < len(data) <= MAX_IMAGE_BYTES:
+            return False
+        try:
+            with Image.open(BytesIO(data)) as image:
+                if image.format != 'PNG' or image.size != (640, 640):
+                    return False
+                image.verify()
+            # PNG chunk checks alone do not detect an invalid compressed
+            # pixel stream. Decode the bounded image as the browser must.
+            with Image.open(BytesIO(data)) as image:
+                image.load()
+            return True
+        except (OSError, ValueError, SyntaxError, Image.DecompressionBombError):
+            return False
+
+    def _cached_image_valid(self, path):
+        try:
+            if path.is_symlink() or not path.is_file() or path.stat().st_size > MAX_IMAGE_BYTES:
+                return False
+            with path.open('rb') as image:
+                return self._valid_png(image.read(MAX_IMAGE_BYTES + 1))
+        except OSError:
+            return False
+
+    def _restore(self):
+        """Only restore complete, local manifests produced by this service."""
+        path = self.directory / MANIFEST_NAME
+        try:
+            if path.is_symlink() or not path.is_file():
+                return
+            with path.open('rb') as cached:
+                content = cached.read(MAX_MANIFEST_BYTES + 1)
+            if len(content) > MAX_MANIFEST_BYTES:
+                return
+            manifest = json.loads(content)
+            if (not isinstance(manifest, dict) or
+                    set(manifest) != {'source', 'model_run', 'fetched_at', 'units',
+                                      'resolution_km', 'bounds', 'frames'} or
+                    manifest['source'] != 'NOAA GFS' or manifest['units'] != 'mm/h' or
+                    type(manifest['resolution_km']) is not int or manifest['resolution_km'] != 28 or
+                    manifest['bounds'] != BOUNDS):
+                return
+            model_run, fetched_at = manifest['model_run'], manifest['fetched_at']
+            now = self.clock()
+            if (type(model_run) is not int or type(fetched_at) is not int or
+                    model_run <= 0 or model_run % (6 * 3600) or
+                    not 0 <= now - model_run < 24 * 3600 or
+                    not model_run <= fetched_at <= now):
+                return
+            frames = manifest['frames']
+            if not isinstance(frames, list) or not 2 <= len(frames) <= HORIZON_HOURS + 2:
+                return
+            cycle = datetime.fromtimestamp(model_run, UTC)
+            previous = None
+            for frame in frames:
+                if (not isinstance(frame, dict) or set(frame) != {'time', 'url'} or
+                        type(frame['time']) is not int or not isinstance(frame['url'], str)):
+                    return
+                stamp = frame['time']
+                hour, remainder = divmod(stamp - model_run, 3600)
+                expected = f'/forecast-frame/{cycle:%Y%m%d%H}-{hour:03d}.png'
+                if (remainder or not 1 <= hour <= 120 or frame['url'] != expected or
+                        (previous is not None and stamp - previous != 3600) or
+                        not self._cached_image_valid(self.directory / expected.rsplit('/', 1)[-1])):
+                    return
+                previous = stamp
+            if not frames[0]['time'] <= fetched_at <= frames[-1]['time'] or frames[-1]['time'] <= now:
+                return
+            self.manifest = manifest
+            self.generation = cycle.strftime('%Y%m%d%H')
+        except (OSError, ValueError, TypeError, OverflowError, RecursionError):
+            # A cache is optional. Malformed/interrupted files must not prevent
+            # the server from starting or turn old images into current data.
+            return
 
     def snapshot(self):
         now = self.clock()
@@ -130,7 +212,8 @@ class ForecastMaps:
                 frames = [f for f in manifest['frames'] if now - 3600 <= f['time'] <= required_end]
                 if frames:
                     return dict(manifest, frames=frames, status='ready', updating=self.building,
-                                forecast_until=int(now + HORIZON_HOURS * 3600),
+                                forecast_until=min(int(now + HORIZON_HOURS * 3600), frames[-1]['time']),
+                                coverage_complete=frames[-1]['time'] >= now + HORIZON_HOURS * 3600,
                                 horizon_hours=HORIZON_HOURS)
             return dict(status='loading' if self.building else 'unavailable', frames=[],
                         bounds=BOUNDS, source='NOAA GFS', retry_seconds=15)
@@ -147,11 +230,13 @@ class ForecastMaps:
                 stamp = int((cycle + timedelta(hours=hour)).timestamp())
                 name = f"{cycle:%Y%m%d%H}-{hour:03d}.png"
                 path = self.directory / name
-                if not path.exists():
+                if not self._cached_image_valid(path):
                     base = f'{HOST}/gfs.{cycle:%Y%m%d}/{cycle:%H}/atmos/gfs.t{cycle:%H}z.pgrb2.0p25.f{hour:03d}'
                     index = self.reader(base + '.idx').decode('utf-8')
                     data = self.reader(base, precipitation_range(index))
                     png = self.renderer(data, stamp)
+                    if not self._valid_png(png):
+                        raise ValueError('Invalid rendered forecast image')
                     temporary = path.with_suffix('.tmp')
                     temporary.write_bytes(png)
                     temporary.replace(path)
@@ -159,6 +244,9 @@ class ForecastMaps:
             manifest = dict(source='NOAA GFS', model_run=int(cycle.timestamp()),
                             fetched_at=int(self.clock()), units='mm/h',
                             resolution_km=28, bounds=BOUNDS, frames=frames)
+            temporary = self.directory / (MANIFEST_NAME + '.tmp')
+            temporary.write_text(json.dumps(manifest, separators=(',', ':')), encoding='utf-8')
+            temporary.replace(self.directory / MANIFEST_NAME)
             with self.lock:
                 self.manifest = manifest
                 self.generation = cycle.strftime('%Y%m%d%H')
