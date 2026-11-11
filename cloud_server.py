@@ -1527,6 +1527,18 @@ class Handler(
             parsed.query
         )
 
+        if path == "/rain-look-preview":
+            self.send_content(
+                Path(__file__).with_name("rain-look-preview.html").read_bytes(),
+                "text/html; charset=utf-8")
+            return
+
+        if path == "/rain-look-preview-v1.mp4":
+            self.send_content(
+                Path(__file__).with_name("rain-look-preview-v1.mp4").read_bytes(),
+                "video/mp4", cache_control="public, max-age=3600, immutable")
+            return
+
         if path == "/rain-motion.js":
             script = Path(__file__).with_name("rain_motion.js").read_bytes()
             self.send_content(script, "text/javascript; charset=utf-8",
