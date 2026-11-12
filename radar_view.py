@@ -55,7 +55,7 @@ button,input{font:inherit}button{cursor:pointer;-webkit-tap-highlight-color:tran
 <button id="info-toggle" class="round" aria-label="Map information and credits" aria-controls="source-panel" aria-expanded="false"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.1"/></svg></button>
 <section id="source-panel" hidden aria-labelledby="source-title"><button id="source-close" aria-label="Close map details">×</button><h2 id="source-title">Map information &amp; credits</h2><div id="availability" role="status">Checking weather data…</div>
 <p><a href="https://www.rainviewer.com/" target="_blank" rel="noopener">RainViewer</a> supplies recent observed radar. Coverage varies.</p>
-<p><a href="https://www.ncei.noaa.gov/products/weather-climate-models/global-forecast" target="_blank" rel="noopener">NOAA GFS</a> supplies the hourly precipitation forecast, up to 48 hours ahead. Its grid is approximately 28 km. Motion between matching rain patterns is display interpolation, not additional forecast detail.</p>
+<p><a href="https://www.data.gouv.fr/datasets/paquets-arome-outre-mer-antilles-resolution-0-025deg" target="_blank" rel="noopener">Météo-France AROME Antilles</a> supplies the regional forecast on a 2.5 km grid. It shows mean rain rate over each preceding forecast hour. Source: Météo-France, Etalab Open Licence 2.0.</p><p><a href="https://www.ncei.noaa.gov/products/weather-climate-models/global-forecast" target="_blank" rel="noopener">NOAA GFS</a> supplies the final hours needed for a rolling 48-hour outlook and the fallback when regional data is unavailable. Its grid is approximately 28 km and shows instantaneous rain rate. Model changes use actual frames, without morphing one model into another. Motion interpolation adds no forecast resolution.</p>
 <p>Forecast coverage: eastern Caribbean, 10–23°N and 68–55°W. Forecast rain rates use mm/h. The timeline moves from observed radar into model forecasts; the label and legend identify each source.</p><p id="model-run"></p><p id="basemap-status"></p><p>Map data: <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap contributors</a> · <a href="https://openmaptiles.org/" target="_blank" rel="noopener">© OpenMapTiles</a>. Map service: <a href="https://openfreemap.org/" target="_blank" rel="noopener">OpenFreeMap</a>. Terrain shading: Esri, USGS, NOAA.</p>
 </section>
 <footer id="player" aria-label="Animation controls"><div class="player-row">
@@ -63,7 +63,7 @@ button,input{font:inherit}button{cursor:pointer;-webkit-tap-highlight-color:tran
 <button id="jump-latest" aria-label="Go to now" disabled><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 5 10 7-10 7ZM19 5v14"/></svg></button>
 </div><div class="scrubber"><span id="now-marker" hidden aria-label="Now"></span><input id="timeline" type="range" min="0" max="1" step="1" value="0" aria-label="Weather map time" disabled></div>
 <div class="timeline-labels"><span id="start">Recent observations</span><span class="zone">Antigua time</span><span id="end">Latest</span></div></footer>
-<script src="/rain-motion.js?v=4"></script>
+<script src="/rain-motion.js?v=5"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script src="https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.1.4/leaflet-maplibre-gl.js"></script><script>
@@ -105,7 +105,9 @@ const FORECAST_RETRY_MS=15000,FORECAST_DEADLINE_MS=45000;
 let lastLegendKind='',lastDetail='',mapStatus='LOADING';
 function setMapStatus(value){mapStatus=value;map.getContainer().dataset.status=value;}
 const loaded=new Map(),pending=new Map();
-const key=f=>f.kind+':'+(f.model_run||'')+':'+f.time+':'+f.url;
+const provider=f=>f.provider||'noaa-gfs';
+const key=f=>f.kind+':'+provider(f)+':'+(f.model_run||'')+':'+f.time+':'+f.url;
+const sameForecastSource=(a,b)=>provider(a)===provider(b)&&a.model_run===b.model_run&&JSON.stringify(a.bounds)===JSON.stringify(b.bounds);
 const radarTileSize=window.devicePixelRatio>=2?512:256;
 // Only one full-resolution pair is uploaded to the GPU. Flow fields are kept
 // in a bounded worker cache; no extra forecast images are generated or fetched.
@@ -159,7 +161,7 @@ async function captureRainFrame(frame,layer){
 function prefetchFollowingMotion(a,b){
  if(!playing||motionPrefetch||!rainMotionRenderer||!rainMotionRenderer.prefetchPair||motionViewChanging)return;
  const pool=b.kind==='forecast'?predictionFrames:radarFrames,index=pool.indexOf(b),next=pool[index+1];
- if(!next||next.kind!==b.kind||next.time-b.time>(b.kind==='observed'?900:5400)||(b.kind==='forecast'&&next.model_run!==b.model_run))return;
+ if(!next||next.kind!==b.kind||next.time-b.time>(b.kind==='observed'?900:5400)||(b.kind==='forecast'&&!sameForecastSource(b,next)))return;
  const id=motionPairKey(b,next);if(motionPrefetchedKeys.has(id))return;
  const first=loaded.get(key(b)),second=loaded.get(key(next));if(!first||!second)return;
  motionPrefetchedKeys.add(id);while(motionPrefetchedKeys.size>8)motionPrefetchedKeys.delete(motionPrefetchedKeys.values().next().value);
@@ -219,8 +221,12 @@ function updateForecastStatus(){
  if(future.length){
   const end=Math.min(timelineEnd,future.at(-1).time);
   announce(forecastState==='reconnecting'?'Forecast update unavailable; retaining loaded forecast through '+format(end)+'. Retrying automatically…':'Forecast available through '+format(end)+' · hourly data with display motion interpolation.'+(forecastCoverageComplete()?'':' Updating forecast coverage…'));
-  const runs=[...new Set(predictionFrames.map(frame=>frame.model_run))].sort((a,b)=>a-b);
-  $('model-run').textContent=(runs.length>1?'Forecast model runs: ':'Forecast model run: ')+runs.map(format).join(' / ')+' Antigua time.';
+  const sources=new Map();
+  for(const frame of predictionFrames){
+   const id=provider(frame)+':'+frame.model_run;
+   if(!sources.has(id))sources.set(id,frame);
+  }
+  $('model-run').textContent=[...sources.values()].map(frame=>(provider(frame)==='arome-antilles'?'Météo-France AROME Antilles (~2.5 km, hourly mean rain)':'NOAA GFS (~28 km, instantaneous rain)')+': model issued '+format(frame.model_run)+' Antigua time.').join(' ');
  }else{
   announce(forecastState==='preparing'?'Preparing the 48-hour forecast.':'Forecast temporarily unavailable. Reconnecting automatically…');
   $('model-run').textContent='';
@@ -228,7 +234,7 @@ function updateForecastStatus(){
  lastDetail='';if(active.length)render();
 }
 function scheduleForecastRetry(){
- if(forecastMetadataHealthy&&forecastCoverageComplete()){clearTimeout(forecastRetry);forecastRetry=null;return;}
+ if(forecastMetadataHealthy&&forecastCoverageComplete()&&!forecastMeta?.updating){clearTimeout(forecastRetry);forecastRetry=null;return;}
  if(forecastRetry!==null)return;
  forecastRetry=setTimeout(()=>{forecastRetry=null;loadForecast();},FORECAST_RETRY_MS);
 }
@@ -249,7 +255,7 @@ function frameLayer(frame){
   const finish=ok=>{if(settled)return;settled=true;clearTimeout(timeout);if(ok){loaded.set(id,layer);resolve(layer);}else{if(layer)map.removeLayer(layer);reject(new Error('Map frame unavailable'));}};
   const timeout=setTimeout(()=>finish(false),25000);
   if(frame.kind==='forecast'){
-   layer=L.imageOverlay(frame.url,frame.bounds||forecastMeta.bounds,{opacity:0,interactive:false,attribution:'Forecast: NOAA GFS'});
+   layer=L.imageOverlay(frame.url,frame.bounds||forecastMeta.bounds,{opacity:0,interactive:false,attribution:provider(frame)==='arome-antilles'?'Forecast: Météo-France, Etalab Open Licence 2.0':'Forecast: NOAA GFS'});
    layer.once('load',()=>finish(true));layer.once('error',()=>finish(false));
   }else{
    layer=L.tileLayer(frame.url,{opacity:0,tileSize:256,maxNativeZoom:7,maxZoom:12,className:'rain-overlay',attribution:'Radar: RainViewer'});
@@ -299,7 +305,7 @@ function render(){
  const next=new Set([first,second]);for(const layer of visibleLayers)if(!next.has(layer))layer.setOpacity(0);
  // Original timestamps show the actual image. Verified patterns move;
  // weak matches grow/dissipate continuously rather than jumping at halfway.
- const canInterpolate=a!==b && gap>0 && gap<=(kind==='observed'?900:5400) && (kind!=='forecast'||a.model_run===b.model_run) && blend>0 && blend<1;
+ const canInterpolate=a!==b && gap>0 && gap<=(kind==='observed'?900:5400) && (kind!=='forecast'||sameForecastSource(a,b)) && blend>0 && blend<1;
  if(!canInterpolate || !renderMotionPair(a,b,first,second,blend)){
   hideRainMotion();
   if(first===second){first.setOpacity(.78);}
@@ -446,7 +452,8 @@ async function loadForecast(){
   if(response.status===202){forecastMetadataHealthy=false;forecastState=forecastEverPublished?'reconnecting':'preparing';publishReadyFrames(!activationPromise);return;}
   if(!response.ok||data.status!=='ready'||!Array.isArray(data.frames)||!Array.isArray(data.bounds)||data.bounds.length!==2||data.bounds.some(point=>!Array.isArray(point)||point.length!==2||!point.every(Number.isFinite))||!Number.isFinite(data.model_run)||(data.forecast_until!==undefined&&!Number.isFinite(data.forecast_until)))throw new Error();
   const now=Date.now()/1000;
-  const upcoming=data.frames.map(f=>({...f,kind:'forecast',model_run:data.model_run,bounds:data.bounds,forecast_until:data.forecast_until})).filter(f=>Number.isFinite(f.time)&&f.url&&validForecastFrame(f,now));
+  const validBounds=b=>Array.isArray(b)&&b.length===2&&b.every(p=>Array.isArray(p)&&p.length===2&&p.every(Number.isFinite))&&b[0][0]<b[1][0]&&b[0][1]<b[1][1]&&b.every(p=>Math.abs(p[0])<=85&&Math.abs(p[1])<=180);
+  const upcoming=data.frames.map(f=>({...f,kind:'forecast',provider:f.provider||'noaa-gfs',model_run:f.model_run??data.model_run,bounds:f.bounds||data.bounds,forecast_until:data.forecast_until})).filter(f=>Number.isFinite(f.time)&&f.url&&validBounds(f.bounds)&&['arome-antilles','noaa-gfs'].includes(f.provider)&&validForecastFrame(f,now));
   if(upcoming.length<2||!upcoming.some(frame=>frame.time>now)||(data.forecast_until!==undefined&&data.forecast_until<=now))throw new Error();
   forecastMetadataHealthy=true;forecastMeta=data;forecast=upcoming.sort((a,b)=>a.time-b.time);
   forecastState=forecastEverPublished?'updating':'preparing';
@@ -458,7 +465,7 @@ async function loadForecast(){
   publishReadyFrames(!activationPromise);updateForecastStatus();
  }finally{
   loading=false;
-  if(forecastRetryRequested||!forecastMetadataHealthy||!forecastCoverageComplete())scheduleForecastRetry();
+  if(forecastRetryRequested||!forecastMetadataHealthy||!forecastCoverageComplete()||forecastMeta?.updating)scheduleForecastRetry();
  }
 }
 function refreshAfterResume(){

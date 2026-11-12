@@ -1,5 +1,35 @@
 # Radar and 48-hour forecast playback
 
+## Regional rain detail
+
+Météo-France AROME Antilles supplies hourly mean rain on an approximately2.5km
+grid, replacing coarse GFS images where a valid regional image exists. Actual
+public GRIB surface accumulations are differenced over consecutive same-run
+hours and rendered in Web Mercator. This is forecast rainfall, not observed or
+simulated radar reflectivity. The source is credited under Etalab Open Licence2.0.
+No new API key or paid weather subscription is required.
+
+AROME ends at48hours from its issue time. NOAA GFS supplies the final hours
+required for a rolling48hours from now, missing regional hours, and fallback
+coverage during regional outages. Each frame retains its own provider, model
+issue time, geographic bounds and rainfall semantics. The info panel identifies
+both sources; the existing map controls and single timeline stay in place.
+Different models are never morphed together. A source handoff displays one
+actual forecast image. Hourly interpolation adds no forecast detail or physical
+rain-cell tracking.
+
+A complete GFS horizon remains usable while the regional cache prepares; the
+phone retries metadata every15seconds during that build and progressively
+replaces only successfully loaded regional images. Missing images retain valid
+loaded GFS coverage. Reported horizon/coverage uses actual available timestamps.
+`arome-cache/` contains only selected precipitation GRIB records, PNGs and an
+atomic manifest, with age/format checks and bounded downloads. It is ignored by
+Git. A failed build preserves the previous valid cache and respects retry backoff.
+
+Provider checks: `python -m unittest discover -s tests`.
+Phone integration: `SEAPOINT_TEST_URL=http://127.0.0.1:8781 python tests/browser_regional_forecast.py`.
+
+
 SeaPoint's existing `/radar` WebView now loads a player with observed RainViewer
 radar, a NOAA GFS precipitation forecast, play/pause, a draggable time slider,
 and smooth blending between hourly forecast images. No Android app replacement
