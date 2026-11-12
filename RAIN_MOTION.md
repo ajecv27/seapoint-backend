@@ -2,7 +2,7 @@
 
 Adjacent rain images now use matched local pattern motion instead of a full-
 interval dissolve of stationary images. The source weather fields, timestamps,
-forecast horizon and data providers are unchanged.
+forecast horizon and observed radar remain unchanged.
 
 A bounded browser worker estimates forward and reverse motion on a small image
 pyramid. Correlation, reverse consistency and neighboring vectors reject weak
@@ -34,8 +34,8 @@ Pan/zoom keeps playback running; observed capture is rebuilt for the new view.
 New radar tiles finish loading before that capture, and late tile loads can
 recover immediately after a timeout instead of leaving movement disabled.
 RainViewer display tiles remain usable if a separate CORS-safe pixel capture
-fails. Motion estimates add no observations or forecast resolution: GFS remains
-an hourly model with an approximately28km grid. This is a display transition,
+fails. Motion estimates add no observations or forecast resolution: AROME Antilles uses an approximately2.5km grid; its hourly fields are mean
+rain rates. GFS remains the approximately28km fallback and longer-range tail. This is a display transition,
 not a prediction of an individual rain cell's exact path.
 
 Memory is bounded to four cached image-pair motion results, 24 readable tile
@@ -47,8 +47,9 @@ resumes without skipping forward. The server adds no processing library.
 
 ## Forecast contours
 
-Forecast images use bounded cubic spatial sampling of the same hourly GFS
-rates. Values stay within the four surrounding model values, with no new
+Forecast images use bounded cubic spatial sampling of the providers' rates.
+Regional AROME rates come from differences of validated hourly accumulations;
+GFS rates are instantaneous. Values stay within the four surrounding model values, with no new
 extrema or wet cells in dry areas. Light-rain opacity rises continuously from
 0 at 0.1 mm/hour to 200 at 0.6; stronger rates retain the existing colours and
 opacity. This removes hard cyan outlines and coarse display corners without
@@ -56,7 +57,7 @@ increasing the model resolution. Versioned image names and a private cache
 manifest prevent old-style images being reused after deployment. Old image URLs
 remain readable for already-playing clients.
 
-The model still changes precipitation shape and intensity between hourly
+Both models still change precipitation shape and intensity between hourly
 outputs. Those changes cannot establish the physical track of an individual
 rain cloud; source handoffs remain distinct from interpolated same-source rain.
 

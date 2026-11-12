@@ -15,12 +15,12 @@ from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 from pypdf import PdfReader
-from forecast_maps import ForecastMaps
+from forecast_service import RegionalForecastMaps
 from official_alerts import OfficialAlertService, parse_marine_locations, parse_marine_cancellations
 from radar_view import radar_page
 from basemap_service import basemap_document
 
-FORECAST_MAPS = ForecastMaps()
+FORECAST_MAPS = RegionalForecastMaps()
 
 
 SOURCE = "https://www.antiguamet.com/Daily_FCast.html"

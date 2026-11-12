@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 forecast-cache/
 .env
+arome-cache/
