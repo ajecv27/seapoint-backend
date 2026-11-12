@@ -137,7 +137,10 @@ def render_grib(data, expected_time):
 
 
 class ForecastMaps:
-    def __init__(self, directory=None, reader=None, renderer=None, clock=None):
+    def __init__(self, directory=None, reader=None, renderer=None, clock=None, horizon_hours=48):
+        if type(horizon_hours) is not int or not 48 <= horizon_hours <= 72:
+            raise ValueError('Forecast horizon must be between 48 and 72 hours')
+        self.horizon_hours = horizon_hours
         self.directory = Path(directory or os.environ.get(
             'SEAPOINT_FORECAST_CACHE', Path(__file__).with_name('forecast-cache')))
         self.reader = reader or read_url
@@ -202,7 +205,7 @@ class ForecastMaps:
                     not model_run <= fetched_at <= now):
                 return
             frames = manifest['frames']
-            if not isinstance(frames, list) or not 2 <= len(frames) <= HORIZON_HOURS + 2:
+            if not isinstance(frames, list) or not 2 <= len(frames) <= self.horizon_hours + 2:
                 return
             cycle = datetime.fromtimestamp(model_run, UTC)
             previous = None
@@ -233,7 +236,7 @@ class ForecastMaps:
         cycle = datetime.fromtimestamp(now - 5 * 3600, UTC)
         cycle = cycle.replace(hour=cycle.hour // 6 * 6, minute=0, second=0, microsecond=0)
         generation = cycle.strftime('%Y%m%d%H')
-        required_end = math.ceil(now / 3600) * 3600 + HORIZON_HOURS * 3600
+        required_end = math.ceil(now / 3600) * 3600 + self.horizon_hours * 3600
         with self.lock:
             manifest = self.manifest
             refresh = (self.generation != generation or not manifest or
@@ -245,9 +248,9 @@ class ForecastMaps:
                 frames = [f for f in manifest['frames'] if now - 3600 <= f['time'] <= required_end]
                 if frames:
                     return dict(manifest, frames=frames, status='ready', updating=self.building,
-                                forecast_until=min(int(now + HORIZON_HOURS * 3600), frames[-1]['time']),
-                                coverage_complete=frames[-1]['time'] >= now + HORIZON_HOURS * 3600,
-                                horizon_hours=HORIZON_HOURS)
+                                forecast_until=min(int(now + self.horizon_hours * 3600), frames[-1]['time']),
+                                coverage_complete=frames[-1]['time'] >= now + self.horizon_hours * 3600,
+                                horizon_hours=self.horizon_hours)
             return dict(status='loading' if self.building else 'unavailable', frames=[],
                         bounds=BOUNDS, source='NOAA GFS', retry_seconds=15)
 
@@ -259,7 +262,7 @@ class ForecastMaps:
             frames = []
             # Include the current hour, the full horizon, and a final bracketing
             # hour so a request between whole hours still has future coverage.
-            for hour in range(first, first + HORIZON_HOURS + 2):
+            for hour in range(first, first + self.horizon_hours + 2):
                 stamp = int((cycle + timedelta(hours=hour)).timestamp())
                 name = f"{cycle:%Y%m%d%H}-{hour:03d}-{RENDER_STYLE}.png"
                 path = self.directory / name
