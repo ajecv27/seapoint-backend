@@ -1,0 +1,17 @@
+[
+  {
+    "name": "defer-navigation-until-opened",
+    "old": "class _SeaPointHomeState extends State<SeaPointHome> {\n  int _selectedIndex = 0;",
+    "new": "class _SeaPointHomeState extends State<SeaPointHome> {\n  int _selectedIndex = 0;\n  bool _navigationOpened = false;"
+  },
+  {
+    "name": "keep-unopened-navigation-lightweight",
+    "old": "        children: const [\n          MarineDashboard(),\n          NavigationScreen(),\n        ],",
+    "new": "        children: [\n          const MarineDashboard(),\n          _navigationOpened\n              ? const NavigationScreen()\n              : const SizedBox.shrink(),\n        ],"
+  },
+  {
+    "name": "retain-navigation-after-first-selection",
+    "old": "        onDestinationSelected: (index) {\n          setState(() {\n            _selectedIndex = index;\n          });\n        },",
+    "new": "        onDestinationSelected: (index) {\n          setState(() {\n            _selectedIndex = index;\n            if (index == 1) {\n              _navigationOpened = true;\n            }\n          });\n        },"
+  }
+]
