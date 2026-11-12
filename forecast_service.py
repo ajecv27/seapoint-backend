@@ -34,13 +34,17 @@ PROVIDERS = {
 
 
 class RegionalForecastMaps:
-    def __init__(self, gfs=None, arome=None, clock=None):
+    def __init__(self, gfs=None, arome=None, clock=None, horizon_hours=48):
         # Lazy imports keep this selector independently testable while the
         # provider modules retain their own optional decoding dependencies.
+        if type(horizon_hours) is not int or not 48 <= horizon_hours <= 72:
+            raise ValueError('Forecast horizon must be between 48 and 72 hours')
+        self.horizon_hours = horizon_hours
+        self.horizon_seconds = horizon_hours * HOUR
         self.clock = clock or time.time
         if gfs is None:
             from forecast_maps import ForecastMaps
-            gfs = ForecastMaps(clock=self.clock)
+            gfs = ForecastMaps(clock=self.clock, horizon_hours=self.horizon_hours)
         if arome is None:
             from arome_maps import AromeMaps
             arome = AromeMaps(clock=self.clock)
@@ -57,7 +61,7 @@ class RegionalForecastMaps:
             return {'status': 'unavailable'}
 
     @staticmethod
-    def _frames(snapshot, provider, now):
+    def _frames(snapshot, provider, now, horizon_hours=48):
         spec = PROVIDERS[provider]
         run = snapshot.get('model_run')
         fetched = snapshot.get('fetched_at')
@@ -70,7 +74,7 @@ class RegionalForecastMaps:
                 type(fetched) is not int or not run <= fetched <= now + 60 or
                 not isinstance(snapshot.get('frames'), list)):
             return []
-        end = math.ceil(now / HOUR) * HOUR + HORIZON
+        end = math.ceil(now / HOUR) * HOUR + horizon_hours * HOUR
         cycle = datetime.fromtimestamp(run, timezone.utc).strftime('%Y%m%d%H')
         frames = {}
         # Bound malformed provider responses independently of disk validation.
@@ -127,7 +131,7 @@ class RegionalForecastMaps:
             'noaa-gfs': self._snapshot(self.gfs),
             'arome-antilles': self._snapshot(self.arome),
         }
-        fields = {key: self._frames(value, key, now)
+        fields = {key: self._frames(value, key, now, self.horizon_hours)
                   for key, value in snapshots.items()}
         # Regional detail replaces matching GFS timestamps, never a larger
         # interval containing missing AROME hours. GFS remains the full tail.
@@ -141,7 +145,7 @@ class RegionalForecastMaps:
                 'bounds': deepcopy(PROVIDERS['noaa-gfs']['bounds']),
                 'source': 'Météo-France AROME Antilles / NOAA GFS',
                 'units': 'mm/h', 'retry_seconds': 15,
-                'coverage_complete': False, 'horizon_hours': 48,
+                'coverage_complete': False, 'horizon_hours': self.horizon_hours,
             }
         used = list(dict.fromkeys(frame['provider'] for frame in frames))
         bounds = [
@@ -151,12 +155,13 @@ class RegionalForecastMaps:
              min(PROVIDERS[key]['bounds'][1][1] for key in used)],
         ]
         complete = (frames[0]['time'] <= now and
-                    frames[-1]['time'] >= now + HORIZON and
+                    frames[-1]['time'] >= now + self.horizon_seconds and
                     all(right['time'] - left['time'] == HOUR
                         for left, right in zip(frames, frames[1:])))
         sources = [{
             'provider': key, 'source': PROVIDERS[key]['source'],
             'model_run': snapshots[key]['model_run'],
+            'fetched_at': snapshots[key]['fetched_at'],
             'resolution_km': PROVIDERS[key]['resolution_km'],
             'bounds': deepcopy(PROVIDERS[key]['bounds']),
             'period_seconds': PROVIDERS[key]['period_seconds'],
@@ -172,8 +177,8 @@ class RegionalForecastMaps:
             'resolution_km': max(PROVIDERS[key]['resolution_km'] for key in used),
             'resolution_range_km': sorted({PROVIDERS[key]['resolution_km'] for key in used}),
             'frames': frames, 'coverage_segments': self._segments(frames),
-            'forecast_until': min(int(now + HORIZON), frames[-1]['time']),
-            'coverage_complete': complete, 'horizon_hours': 48,
+            'forecast_until': min(int(now + self.horizon_seconds), frames[-1]['time']),
+            'coverage_complete': complete, 'horizon_hours': self.horizon_hours,
             'updating': any(value.get('updating') or value.get('status') == 'loading'
                             for value in snapshots.values()),
             'provider_status': {
