@@ -202,3 +202,27 @@ time slider or pressing pause still stops it. The info button has a smaller
 34px visual circle and 18px icon with a 44px touch target. The Android header
 patch also supports resizing an already installed native info action, with a
 backup and guarded matching before changing the Dart file.
+
+## Startup performance
+
+The HTTP socket binds before numerical provider imports and cached-image
+validation. A single background initializer restores/prepares the forecast;
+metadata remains explicitly loading or unavailable until it is usable. Basic
+HTTP routes and the radar shell do not wait for that initializer.
+
+The radar page needs Leaflet for its basic map and controls. It notifies the
+native app after the first UI frame; MapLibre, hillshade and motion processing
+then load independently with bounded retries. Existing weather images remain
+playable through the opacity-corrected fallback while optional scripts load.
+The original map style, sources and48-hour timeline return as resources arrive.
+
+The native startup patch delays Navigation/GPS creation until the Navigation tab
+is first selected, then retains it for ongoing trips. Radar can recover a missed
+ready message and presents Retry after a long wait without aborting a pending
+page request. The guarded installer preserves exact backups of both Dart files.
+
+Render Free sleeps after15minutes without incoming requests and may take about
+a minute to wake: https://render.com/docs/free . These code changes remove
+avoidable application work; they do not remove the hosting platform's idle wake.
+The delayed-script browser benchmark uses an artificial10-second resource hold
+and is not a phone hardware or Render cold-start timing guarantee.
