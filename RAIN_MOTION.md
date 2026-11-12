@@ -1,20 +1,24 @@
 # Rain-frame motion display
 
 Adjacent rain images now use matched local pattern motion instead of a full-
-interval dissolve of stationary images. The source weather frames, timestamps,
+interval dissolve of stationary images. The source weather fields, timestamps,
 forecast horizon and data providers are unchanged.
 
 A bounded browser worker estimates forward and reverse motion on a small image
 pyramid. Correlation, reverse consistency and neighboring vectors reject weak
-matches. Verified matches contribute to one common field at the interval's
-midpoint, so both source images follow a consistent path. Missing reverse
-coverage is distinguished from a confident contradictory match.
+matches. Verified matches seed one field at the interval's midpoint. Connected wet
+regions with multiple trusted matches receive spatially regularized motion;
+regions without those anchors retain zero movement. Dry margins are extended
+only for inverse sampling. This is display interpolation, not independent
+tracking of every cell. Missing reverse coverage is distinguished from a
+confident contradictory match.
 
 A WebGL canvas warps the original-resolution images with that common field.
 Colours are premultiplied before bilinear sampling, preventing dark cuts around
 transparent rain edges. The original source endpoints remain pixel-exact.
-Inverse-solution checks suppress invalid paths; inconsistent local trajectories
-lose confidence instead of introducing unsupported motion.
+The renderer uses one advected image pair instead of mixing moving rain with
+a second stationary copy at confidence boundaries, removing a source of ghost
+outlines. Uncertain regions do not borrow a global wind direction.
 Unmatched rain grows or dissipates with a continuous premultiplied transition;
 it no longer switches images halfway through the interval. Missing WebGL or
 unreadable cross-origin pixels use an opacity-corrected image transition.
@@ -40,6 +44,21 @@ cached in the worker alongside the directional estimates. The next pair is
 prepared in advance without changing the active GPU textures. On a cache miss,
 playback holds at the source timestamp while the worker prepares motion, then
 resumes without skipping forward. The server adds no processing library.
+
+## Forecast contours
+
+Forecast images use bounded cubic spatial sampling of the same hourly GFS
+rates. Values stay within the four surrounding model values, with no new
+extrema or wet cells in dry areas. Light-rain opacity rises continuously from
+0 at 0.1 mm/hour to 200 at 0.6; stronger rates retain the existing colours and
+opacity. This removes hard cyan outlines and coarse display corners without
+increasing the model resolution. Versioned image names and a private cache
+manifest prevent old-style images being reused after deployment. Old image URLs
+remain readable for already-playing clients.
+
+The model still changes precipitation shape and intensity between hourly
+outputs. Those changes cannot establish the physical track of an individual
+rain cloud; source handoffs remain distinct from interpolated same-source rain.
 
 ## Checks
 

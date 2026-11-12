@@ -19,7 +19,10 @@ BOUNDS = [[10.0, -68.0], [23.0, -55.0]]
 HOST = 'https://noaa-gfs-bdp-pds.s3.amazonaws.com'
 LOG = logging.getLogger(__name__)
 HORIZON_HOURS = 48
-MANIFEST_NAME = 'manifest.json'
+# Version public image URLs as well as the private manifest so old styles are
+# neither restored after restart nor reused from a browser's image cache.
+RENDER_STYLE = 's2'
+MANIFEST_NAME = f'manifest-{RENDER_STYLE}.json'
 MAX_MANIFEST_BYTES = 32_768
 MAX_IMAGE_BYTES = 4_000_000
 
@@ -48,7 +51,12 @@ def precipitation_range(index):
 
 
 def rgba(rates):
-    """Consistent forecast scale, mm/hour. Transparent means less than 0.1."""
+    """Forecast scale in mm/hour, with a continuous light-rain opacity edge.
+
+    The same thresholds and colours describe intensity. Opacity rises smoothly
+    from 0 at 0.1 mm/hour to the existing 200 at 0.6, avoiding a solid outline
+    around every tiny amount of forecast drizzle.
+    """
     levels = np.array([0.1, 0.5, 2.5, 7.5, 15, 30, 60])
     colors = np.array([[100, 210, 255], [45, 140, 245], [106, 78, 211],
                        [215, 55, 143], [255, 158, 70], [255, 230, 65], [255, 255, 190]])
@@ -56,8 +64,41 @@ def rgba(rates):
     safe_rates = np.where(np.isfinite(rates), rates, 0)
     for channel in range(3):
         pixels[..., channel] = np.interp(safe_rates, levels, colors[:, channel]).astype(np.uint8)
-    pixels[..., 3] = np.where(np.isfinite(rates) & (rates >= 0.1), 200, 0)
+    edge = np.clip((safe_rates - 0.1) / 0.5, 0, 1)
+    opacity = 200 * edge * edge * (3 - 2 * edge)
+    pixels[..., 3] = np.rint(np.where(np.isfinite(rates), opacity, 0)).astype(np.uint8)
     return pixels
+
+
+def sample_rates(values, x, y):
+    """Sample the model grid for display without creating new extrema.
+
+    Catmull-Rom curves soften the bilinear grid's corners. Clamping each output
+    to its four surrounding model values prevents cubic ringing from creating
+    stronger rainfall, negative rates, or wet islands inside a dry grid cell.
+    This is spatial display interpolation, not additional forecast resolution.
+    Longitude wraps at the global grid seam; latitude clamps at the poles.
+    """
+    x0, y0 = np.floor(x).astype(int), np.floor(y).astype(int)
+    fx, fy = (x - x0)[None, :], (y - y0)[:, None]
+    height, width = values.shape
+
+    def cubic(a, b, c, d, t):
+        return b + 0.5 * t * (c - a + t *
+               (2 * a - 5 * b + 4 * c - d + t * (3 * (b - c) + d - a)))
+
+    rows = []
+    for dy in (-1, 0, 1, 2):
+        yy = np.clip(y0 + dy, 0, height - 1)[:, None]
+        samples = [values[yy, ((x0 + dx) % width)[None, :]]
+                   for dx in (-1, 0, 1, 2)]
+        rows.append(cubic(*samples, fx))
+    interpolated = cubic(*rows, fy)
+    neighbors = [values[np.clip(y0 + dy, 0, height - 1)[:, None],
+                        ((x0 + dx) % width)[None, :]]
+                 for dy in (0, 1) for dx in (0, 1)]
+    return np.maximum(0, np.clip(interpolated, np.minimum.reduce(neighbors),
+                                 np.maximum.reduce(neighbors)))
 
 
 def render_grib(data, expected_time):
@@ -87,15 +128,7 @@ def render_grib(data, expected_time):
         longitudes = np.linspace(west % 360, east % 360, width)
         y = (90 - latitudes) / 0.25
         x = longitudes / 0.25
-        y0, x0 = np.floor(y).astype(int), np.floor(x).astype(int)
-        fy, fx = (y - y0)[:, None], (x - x0)[None, :]
-        # Interpolation only smooths the display; it does not add model detail.
-        a = values[y0[:, None], x0[None, :]]
-        b = values[y0[:, None], (x0 + 1)[None, :]]
-        c = values[(y0 + 1)[:, None], x0[None, :]]
-        d = values[(y0 + 1)[:, None], (x0 + 1)[None, :]]
-        rates = ((a * (1 - fx) + b * fx) * (1 - fy) +
-                 (c * (1 - fx) + d * fx) * fy) * 3600
+        rates = sample_rates(values, x, y) * 3600
         output = BytesIO()
         Image.fromarray(rgba(rates)).save(output, format='PNG')
         return output.getvalue()
@@ -179,7 +212,7 @@ class ForecastMaps:
                     return
                 stamp = frame['time']
                 hour, remainder = divmod(stamp - model_run, 3600)
-                expected = f'/forecast-frame/{cycle:%Y%m%d%H}-{hour:03d}.png'
+                expected = f'/forecast-frame/{cycle:%Y%m%d%H}-{hour:03d}-{RENDER_STYLE}.png'
                 if (remainder or not 1 <= hour <= 120 or frame['url'] != expected or
                         (previous is not None and stamp - previous != 3600) or
                         not self._cached_image_valid(self.directory / expected.rsplit('/', 1)[-1])):
@@ -228,7 +261,7 @@ class ForecastMaps:
             # hour so a request between whole hours still has future coverage.
             for hour in range(first, first + HORIZON_HOURS + 2):
                 stamp = int((cycle + timedelta(hours=hour)).timestamp())
-                name = f"{cycle:%Y%m%d%H}-{hour:03d}.png"
+                name = f"{cycle:%Y%m%d%H}-{hour:03d}-{RENDER_STYLE}.png"
                 path = self.directory / name
                 if not self._cached_image_valid(path):
                     base = f'{HOST}/gfs.{cycle:%Y%m%d}/{cycle:%H}/atmos/gfs.t{cycle:%H}z.pgrb2.0p25.f{hour:03d}'
@@ -263,7 +296,7 @@ class ForecastMaps:
                 self.building = False
 
     def image(self, name):
-        if not re.fullmatch(r'\d{10}-\d{3}\.png', name):
+        if not re.fullmatch(r'\d{10}-\d{3}(?:-s2)?\.png', name):
             return None
         path = self.directory / name
         return path.read_bytes() if path.is_file() else None

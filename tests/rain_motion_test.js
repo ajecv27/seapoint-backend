@@ -74,6 +74,31 @@ const opts={workingSize:128,gridSize:20,maxDisplacement:18};
  const defaults=computeMotion(a,b);
  assert.equal(defaults.width,256);assert.equal(defaults.gridWidth,64);assert.equal(defaults.maxDisplacement,24);
 }
+{
+ // Interior rain can be textureless. A region with two independent matched
+ // anchors must follow one continuous path rather than retain static islands
+ // wherever individual patches cannot be matched.
+ const w=24,h=12,forward=new Float32Array(w*h*3),backward=new Float32Array(w*h*3),wetMask=new Uint8Array(w*h);
+ for(let y=2;y<=8;y++)for(let x=2;x<=9;x++)wetMask[y*w+x]=1;
+ for(let y=2;y<=8;y++)for(let x=16;x<=21;x++)wetMask[y*w+x]=1;
+ for(const [x,y] of [[3,4],[4,7]]){const i=(y*w+x)*3;forward[i]=4;forward[i+1]=2;forward[i+2]=1;}
+ const motion={forward,backward,wetMask,gridWidth:w,gridHeight:h,width:96,height:48,maxDisplacement:12};
+ const common=computeMidpointField(motion),middle=(5*w+7)*3,unmatched=(5*w+19)*3;
+ assert.equal(common[middle+2],1);assert(Math.abs(common[middle]-4)<.05);assert(Math.abs(common[middle+1]-2)<.05);
+ assert.equal(common[unmatched],0);assert.equal(common[unmatched+1],0);assert.equal(common[unmatched+2],0);
+ assert(motion.motionCoverage>0&&motion.motionCoverage<1);
+}
+{
+ // Independent rain regions can move in opposite directions. Spatial
+ // regularization must not turn them into a scene-wide translation.
+ const a=frame(256,256,[{x:65,y:65,rx:30,ry:26},{x:180,y:185,rx:26,ry:30}]);
+ const b=frame(256,256,[{x:89,y:65,rx:30,ry:26},{x:162,y:173,rx:26,ry:30}]);
+ const m=computeMotion(a,b,opts);
+ const sample=(x,y)=>{const gx=Math.floor(x*m.gridWidth/m.width),gy=Math.floor(y*m.gridHeight/m.height),i=(gy*m.gridWidth+gx)*3;return Array.from(m.common.slice(i,i+3));};
+ const east=sample(38,32),west=sample(85,89);
+ assert(east[0]>8&&east[2]>.9);assert(west[0]<-5&&west[1]<-3&&west[2]>.9);
+ assert(m.motionCoverage>.9);
+}
 async function testPrefetch(){
  const a=frame(64,64,[{x:25,y:30,rx:12,ry:10}]),b=frame(64,64,[{x:29,y:32,rx:12,ry:10}]);
  const motion=computeMotion(a,b,opts),canvas={width:17,height:19,getContext:()=>null};

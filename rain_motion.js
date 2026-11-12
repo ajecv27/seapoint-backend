@@ -54,6 +54,89 @@
       common[i]=dx;common[i+1]=dy;
       common[i+2]=sums[j+2]/sums[j+3]*Math.exp(-Math.max(0,sums[j+4]/sums[j+2]-dx*dx-dy*dy)/varianceLimit);
     }
+    // A confidence boundary is not a rain boundary. Carry supported motion
+    // through each connected wet region, instead of overlaying an unmoving
+    // rain image wherever a local patch has no texture to match.
+    if (motion.wetMask && motion.wetMask.length === motion.gridWidth*motion.gridHeight) {
+      const n=motion.wetMask.length,w=motion.gridWidth,h=motion.gridHeight;
+      const labels=new Int32Array(n),components=[];
+      for(let seed=0;seed<n;seed++){
+        if(!motion.wetMask[seed]||labels[seed])continue;
+        const label=components.length+1,cells=[seed];labels[seed]=label;
+        for(let at=0;at<cells.length;at++){
+          const p=cells[at],x=p%w,y=Math.floor(p/w);
+          for(let yy=Math.max(0,y-1);yy<=Math.min(h-1,y+1);yy++)for(let xx=Math.max(0,x-1);xx<=Math.min(w-1,x+1);xx++){
+            const q=yy*w+xx;if(motion.wetMask[q]&&!labels[q]){labels[q]=label;cells.push(q);}
+          }
+        }
+        components.push(cells);
+      }
+      const completed=new Float32Array(common.length),known=new Uint8Array(n),fixed=new Uint8Array(n);
+      let supported=0,wet=0;
+      for(const cells of components){
+        wet+=cells.length;
+        const anchors=cells.filter(p=>common[p*3+2]>=.25);
+        // A solitary matching edge cannot establish a whole region's path.
+        if(anchors.length<2){
+          for(const p of cells){known[p]=1;fixed[p]=1;}
+          continue;
+        }
+        let sx=0,sy=0,sw=0;
+        for(const p of anchors){const i=p*3,c=common[i+2];sx+=common[i]*c;sy+=common[i+1]*c;sw+=c;}
+        const baseX=sx/sw,baseY=sy/sw;
+        const vx=new Float32Array(n),vy=new Float32Array(n),nextX=new Float32Array(n),nextY=new Float32Array(n);
+        for(const p of cells){vx[p]=baseX;vy[p]=baseY;}
+        // Solve a regularized field within the region. Trusted image matches
+        // remain observations, while spatial coherence prevents a different
+        // velocity at every coarse model-cell edge.
+        for(let iteration=0;iteration<100;iteration++){
+          for(const p of cells){
+            const x=p%w,y=Math.floor(p/w),i=p*3,label=labels[p];
+            let ax=0,ay=0,total=0;
+            for(const q of [x>0?p-1:-1,x+1<w?p+1:-1,y>0?p-w:-1,y+1<h?p+w:-1]){
+              if(q>=0&&labels[q]===label){ax+=vx[q]*4;ay+=vy[q]*4;total+=4;}
+            }
+            const confidence=common[i+2]>=.25?common[i+2]:0;
+            ax+=common[i]*confidence;ay+=common[i+1]*confidence;total+=confidence;
+            nextX[p]=total?ax/total:baseX;nextY[p]=total?ay/total:baseY;
+          }
+          for(const p of cells){vx[p]=nextX[p];vy[p]=nextY[p];}
+        }
+        for(const p of cells){const i=p*3;completed[i]=vx[p];completed[i+1]=vy[p];completed[i+2]=1;known[p]=1;fixed[p]=1;supported++;}
+      }
+      if(!supported){motion.motionCoverage=0;return completed;}
+      // Extend into dry margins for inverse sampling. Wet regions without a
+      // matched path stay fixed; their genuine birth/dissipation is preserved.
+      const halo=Math.ceil(motion.maxDisplacement/Math.min(motion.width/w,motion.height/h))+2;
+      for(let step=0;step<halo;step++){
+        const additions=[];
+        for(let p=0;p<n;p++){
+          if(known[p])continue;
+          const x=p%w,y=Math.floor(p/w);let sx=0,sy=0,total=0;
+          for(const q of [x>0?p-1:-1,x+1<w?p+1:-1,y>0?p-w:-1,y+1<h?p+w:-1]){
+            if(q>=0&&known[q]){sx+=completed[q*3];sy+=completed[q*3+1];total++;}
+          }
+          if(total)additions.push([p,sx/total,sy/total]);
+        }
+        if(!additions.length)break;
+        for(const [p,x,y] of additions){const i=p*3;completed[i]=x;completed[i+1]=y;completed[i+2]=1;known[p]=1;}
+      }
+      // Smooth only the dry extension. This cannot borrow a trajectory for an
+      // unmatched wet region or perturb the observed support inside a region.
+      for(let step=0;step<8;step++){
+        const before=completed.slice();
+        for(let p=0;p<n;p++){
+          if(!known[p]||fixed[p])continue;
+          const x=p%w,y=Math.floor(p/w);let sx=before[p*3]*2,sy=before[p*3+1]*2,total=2;
+          for(const q of [x>0?p-1:-1,x+1<w?p+1:-1,y>0?p-w:-1,y+1<h?p+w:-1]){
+            if(q>=0&&known[q]){sx+=before[q*3];sy+=before[q*3+1];total++;}
+          }
+          completed[p*3]=sx/total;completed[p*3+1]=sy/total;
+        }
+      }
+      motion.motionCoverage=wet?supported/wet:0;
+      return completed;
+    }
     return common;
   }
 
@@ -285,7 +368,14 @@
     // A small matched cell still moves even when most of the scene is growing
     // or dissipating. Confidence is applied locally by the renderer.
     result.mode = hasMotion ? 'motion' : 'blend';
+    result.wetMask = new Uint8Array(count);
+    for(let gy=0;gy<gridHeight;gy++)for(let gx=0;gx<gridWidth;gx++){
+      const x=Math.min(width-1,Math.floor((gx+.5)*width/gridWidth));
+      const y=Math.min(height-1,Math.floor((gy+.5)*height/gridHeight));
+      result.wetMask[gy*gridWidth+gx]=Math.max(pa[0].data[y*width+x],pb[0].data[y*width+x])>.02?1:0;
+    }
     result.common = computeMidpointField(result);
+    if(!result.common.some((value,index)=>index%3!==2&&Math.abs(value)>.0001))result.mode='blend';
     result.preparationMs = Date.now() - started;
     return result;
   }
@@ -335,11 +425,9 @@
           midpoint=mix(midpoint,v_uv-(u_t-.5)*flowAt(u_common,midpoint).xy,.5);
         }
         vec3 f=flowAt(u_common,midpoint);
-        float confidence=smoothstep(.08,.25,f.z);
-        // Suppress inverse solutions that do not reach this output pixel.
-        confidence*=1.-smoothstep(.5,2.,length((midpoint+(u_t-.5)*f.xy-v_uv)*u_work));
-        vec4 warped=mix(premultipliedAt(u_a,midpoint-.5*f.xy),premultipliedAt(u_b,midpoint+.5*f.xy),u_t);
-        color=mix(color,warped,confidence);
+        // One path per output pixel: mixing a static image with this advected
+        // image produces stationary ghost outlines at confidence boundaries.
+        color=mix(premultipliedAt(u_a,midpoint-.5*f.xy),premultipliedAt(u_b,midpoint+.5*f.xy),u_t);
       }
       gl_FragColor=color.a>.00001?vec4(color.rgb/color.a,color.a):vec4(0.);
     }`;
@@ -382,7 +470,7 @@
     get stats() {
       return Object.freeze({state:this._state,cacheSize:this._cache.size,pending:!!this._pendingPromise,
         matchedFraction:this._pair?this._pair.motion.matchedFraction:0,confidence:this._pair?this._pair.motion.matchedFraction:0,
-        mode:this._pair?this._pair.motion.mode:'blend',preparationMs:this._pair?this._pair.motion.preparationMs:0,
+        mode:this._pair?this._pair.motion.mode:'blend',motionCoverage:this._pair?this._pair.motion.motionCoverage||0:0,preparationMs:this._pair?this._pair.motion.preparationMs:0,
         worker:!!this._worker,width:this.canvas.width,height:this.canvas.height,key:this._pair?this._pair.key:null,error:this._error||null});
     }
     _finishJob(message) {
