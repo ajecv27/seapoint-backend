@@ -15,12 +15,12 @@ from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 from pypdf import PdfReader
-from forecast_service import RegionalForecastMaps
+from forecast_runtime import ForecastRuntime
 from official_alerts import OfficialAlertService, parse_marine_locations, parse_marine_cancellations
 from radar_view import radar_page
 from basemap_service import basemap_document
 
-FORECAST_MAPS = RegionalForecastMaps()
+FORECAST_MAPS = ForecastRuntime()
 
 
 SOURCE = "https://www.antiguamet.com/Daily_FCast.html"
@@ -1858,13 +1858,13 @@ print(
     f"SeaPoint backend running on port {PORT}"
 )
 
-# Prepare forecasts without delaying HTTP startup or the first radar request.
-FORECAST_MAPS.snapshot()
-
-ThreadingHTTPServer(
+# Bind HTTP before importing providers or restoring their image caches.
+server = ThreadingHTTPServer(
     (
         "0.0.0.0",
         PORT,
     ),
     Handler,
-).serve_forever()
+)
+FORECAST_MAPS.start()
+server.serve_forever()

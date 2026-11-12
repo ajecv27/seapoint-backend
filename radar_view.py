@@ -12,7 +12,6 @@ HTML = r'''<!doctype html>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>SeaPoint Rain Map</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
 <style>
 :root{color-scheme:dark;--panel:rgba(30,39,49,.64);--line:rgba(255,255,255,.16);--blue:rgba(21,142,245,.78);--safe:env(safe-area-inset-bottom,0px)}
 *{box-sizing:border-box}html,body{height:100%;width:100%;margin:0;overflow:hidden;font-family:Arial,Helvetica,sans-serif;background:#153856;color:#fff}
@@ -56,22 +55,33 @@ button,input{font:inherit}button{cursor:pointer;-webkit-tap-highlight-color:tran
 <section id="source-panel" hidden aria-labelledby="source-title"><button id="source-close" aria-label="Close map details">×</button><h2 id="source-title">Map information &amp; credits</h2><div id="availability" role="status">Checking weather data…</div>
 <p><a href="https://www.rainviewer.com/" target="_blank" rel="noopener">RainViewer</a> supplies recent observed radar. Coverage varies.</p>
 <p><a href="https://www.data.gouv.fr/datasets/paquets-arome-outre-mer-antilles-resolution-0-025deg" target="_blank" rel="noopener">Météo-France AROME Antilles</a> supplies the regional forecast on a 2.5 km grid. It shows mean rain rate over each preceding forecast hour. Source: Météo-France, Etalab Open Licence 2.0.</p><p><a href="https://www.ncei.noaa.gov/products/weather-climate-models/global-forecast" target="_blank" rel="noopener">NOAA GFS</a> supplies the final hours needed for a rolling 48-hour outlook and the fallback when regional data is unavailable. Its grid is approximately 28 km and shows instantaneous rain rate. Model changes use actual frames, without morphing one model into another. Motion interpolation adds no forecast resolution.</p>
-<p>Forecast coverage: eastern Caribbean, 10–23°N and 68–55°W. Forecast rain rates use mm/h. The timeline moves from observed radar into model forecasts; the label and legend identify each source.</p><p id="model-run"></p><p id="basemap-status"></p><p>Map data: <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap contributors</a> · <a href="https://openmaptiles.org/" target="_blank" rel="noopener">© OpenMapTiles</a>. Map service: <a href="https://openfreemap.org/" target="_blank" rel="noopener">OpenFreeMap</a>. Terrain shading: Esri, USGS, NOAA.</p>
+<p>Forecast coverage: eastern Caribbean, 10–23°N and 68–55°W. Forecast rain rates use mm/h. The timeline moves from observed radar into model forecasts; the label and legend identify each source.</p><p id="model-run"></p><p id="basemap-status">Loading map…</p><p>Map data: <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap contributors</a> · <a href="https://openmaptiles.org/" target="_blank" rel="noopener">© OpenMapTiles</a>. Map service: <a href="https://openfreemap.org/" target="_blank" rel="noopener">OpenFreeMap</a>. Terrain shading: Esri, USGS, NOAA.</p>
 </section>
 <footer id="player" aria-label="Animation controls"><div class="player-row">
 <button id="play" aria-label="Play animation" disabled><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 4 14 8-14 8Z" fill="currentColor" stroke="none"/></svg></button><div class="time-block"><div id="clock">Loading radar</div><div id="detail">Observed rain</div></div>
 <button id="jump-latest" aria-label="Go to now" disabled><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m5 5 10 7-10 7ZM19 5v14"/></svg></button>
 </div><div class="scrubber"><span id="now-marker" hidden aria-label="Now"></span><input id="timeline" type="range" min="0" max="1" step="1" value="0" aria-label="Weather map time" disabled></div>
 <div class="timeline-labels"><span id="start">Recent observations</span><span class="zone">Antigua time</span><span id="end">Latest</span></div></footer>
-<script src="/rain-motion.js?v=5"></script>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
-<script src="https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.1.4/leaflet-maplibre-gl.js"></script><script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" onerror="window.seapointBootFailed=true;if(window.SeaPointRadar)window.SeaPointRadar.postMessage('error');"></script>
+<script>
 'use strict';
 const config=__CONFIG__;
 document.title='SeaPoint Rain Map · '+config.name;
 const map=L.map('map',{zoomControl:false,attributionControl:false,zoomSnap:.5,zoomDelta:.5}).setView([config.lat,config.lon],10.5);
-let flatBasemap=null;
+let flatBasemap=null,terrainLayer=null,optionalDisposed=false;
+const optionalResources=new Map();
+function optionalResource(url,stylesheet=false){
+ if(optionalResources.has(url))return optionalResources.get(url);
+ const task=new Promise((resolve,reject)=>{
+  const node=document.createElement(stylesheet?'link':'script');
+  if(stylesheet){node.rel='stylesheet';node.href=url;}else{node.src=url;node.async=true;}
+  const finish=error=>{clearTimeout(timer);node.onload=node.onerror=null;if(error){node.remove();reject(error);}else resolve();};
+  const timer=setTimeout(()=>finish(new Error('Map resource timed out')),30000);
+  node.onload=()=>finish();node.onerror=()=>finish(new Error('Map resource unavailable'));
+  document.head.appendChild(node);
+ }).catch(error=>{optionalResources.delete(url);throw error;});
+ optionalResources.set(url,task);return task;
+}
 function dismissCredits(){document.getElementById('credits-notice').hidden=true;}
 function presentCredits(){
  const credit=document.getElementById('credits-notice');credit.hidden=false;
@@ -79,9 +89,10 @@ function presentCredits(){
 }
 map.once('movestart',dismissCredits);
 function loadFlatBasemap(){
+ if(optionalDisposed||flatBasemap)return;
  try{
   flatBasemap=L.maplibreGL({style:'/basemap-style',interactive:false,attributionControl:false}).addTo(map);
-  flatBasemap.getMaplibreMap().once('load',presentCredits);
+  flatBasemap.getMaplibreMap().once('load',()=>{document.getElementById('basemap-status').textContent='';presentCredits();loadTerrain();});
   flatBasemap.getMaplibreMap().on('error',()=>{
    document.getElementById('basemap-status').textContent='Base map is temporarily unavailable; weather layers remain available.';
   });
@@ -89,10 +100,23 @@ function loadFlatBasemap(){
   document.getElementById('basemap-status').textContent='This device could not load the map-style basemap.';
  }
 }
-loadFlatBasemap();
-map.createPane('terrain');map.getPane('terrain').style.zIndex=250;
-map.getPane('terrain').style.mixBlendMode='multiply';map.getPane('terrain').style.pointerEvents='none';
-L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}',{pane:'terrain',opacity:.24,maxNativeZoom:16,maxZoom:12,attribution:'Terrain: Esri, USGS, NOAA'}).addTo(map);
+function loadTerrain(){
+ if(optionalDisposed||terrainLayer)return;
+ map.createPane('terrain');map.getPane('terrain').style.zIndex=250;
+ map.getPane('terrain').style.mixBlendMode='multiply';map.getPane('terrain').style.pointerEvents='none';
+ terrainLayer=L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Elevation/World_Hillshade/MapServer/tile/{z}/{y}/{x}',{pane:'terrain',opacity:.24,maxNativeZoom:16,maxZoom:12,attribution:'Terrain: Esri, USGS, NOAA'}).addTo(map);
+}
+async function loadOptionalMap(attempt=0){
+ try{
+  await Promise.all([optionalResource('https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css',true),optionalResource('https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js')]);
+  await optionalResource('https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.1.4/leaflet-maplibre-gl.js');
+  loadFlatBasemap();
+ }catch(_){
+  if(optionalDisposed)return;
+  document.getElementById('basemap-status').textContent=attempt?'Base map is temporarily unavailable; weather layers remain available.':'Base map is reconnecting; weather layers remain available.';
+  if(!attempt)setTimeout(()=>{if(!optionalDisposed)loadOptionalMap(1);},5000);
+ }
+}
 L.circleMarker([config.lat,config.lon],{pane:'markerPane',radius:8,color:'#fff',weight:3,fillColor:'#1498ff',fillOpacity:1}).addTo(map).bindPopup(document.createTextNode(config.name));
 const $=id=>document.getElementById(id);
 const timeFormatter=new Intl.DateTimeFormat('en-US',{timeZone:'America/Antigua',weekday:'short',hour:'numeric',minute:'2-digit'});
@@ -120,7 +144,19 @@ const MotionOverlay=L.Layer.extend({
 });
 const rainMotionOverlay=new MotionOverlay().addTo(map);
 let rainMotionRenderer=null;
-try{if(window.SeaPointRainMotion)rainMotionRenderer=SeaPointRainMotion.createRenderer(rainMotionOverlay._canvas,{cacheSize:4,workingSize:256,gridSize:64,maxDisplacement:24});}catch(_){}
+async function loadOptionalMotion(attempt=0){
+ try{
+  await optionalResource('/rain-motion.js?v=6');
+  if(optionalDisposed||rainMotionRenderer||!window.SeaPointRainMotion)return;
+  rainMotionRenderer=SeaPointRainMotion.createRenderer(rainMotionOverlay._canvas,{cacheSize:4,workingSize:256,gridSize:64,maxDisplacement:24});
+  motionStatus=rainMotionRenderer.supported?'idle':'unsupported';
+  if(active.length&&!motionViewChanging)render();
+ }catch(_){
+  if(optionalDisposed)return;
+  motionStatus='unsupported';
+  if(!attempt)setTimeout(()=>{if(!optionalDisposed)loadOptionalMotion(1);},5000);
+ }
+}
 let motionViewChanging=false,motionViewRevision=0,motionReadyKey='',motionJob=null,motionWanted=null,motionBuffered=false,motionPrefetch=null;
 const motionPrefetchedKeys=new Set();
 let motionStatus=rainMotionRenderer&&rainMotionRenderer.supported?'idle':'unsupported';
@@ -200,12 +236,11 @@ function renderMotionPair(a,b,first,second,blend){
 }
 map.on('movestart zoomstart',()=>{motionViewChanging=true;hideRainMotion();if(active.length)render();});
 map.on('moveend zoomend',()=>{motionViewChanging=false;motionViewRevision++;motionWanted=null;hideRainMotion();if(active.length)render();});
-window.addEventListener('pagehide',event=>{if(!event.persisted&&rainMotionRenderer)rainMotionRenderer.dispose();readableTiles.clear();});
+window.addEventListener('pagehide',event=>{if(!event.persisted){optionalDisposed=true;if(rainMotionRenderer)rainMotionRenderer.dispose();}readableTiles.clear();});
 
 window.seapointToggleInfo=()=>showInfo($('source-panel').hidden);
 window.seapointUseNativeInfo=()=>{$('info-toggle').hidden=true;};
-function notify(){if(window.SeaPointRadar)window.SeaPointRadar.postMessage('ready');}
-notify();
+function notify(){window.seapointBootReady=true;if(window.SeaPointRadar)window.SeaPointRadar.postMessage('ready');}
 function announce(message){$('availability').textContent=message;}
 function observationEnd(){return radarFrames.length?radarFrames.at(-1).time:-Infinity;}
 function validForecastFrame(frame,now=Date.now()/1000){
@@ -482,6 +517,8 @@ loadObserved();loadForecast();setInterval(loadObserved,300000);setInterval(loadF
 setInterval(()=>{publishReadyFrames(!loading&&!activationPromise);updateNowMarker();scheduleForecastRetry();},60000);
 $('zoom-in').onclick=()=>map.zoomIn();$('zoom-out').onclick=()=>map.zoomOut();
 $('recenter').onclick=()=>map.setView([config.lat,config.lon],10.5);
+// Let the basic map and controls paint before optional GPU/map resources load.
+requestAnimationFrame(()=>{notify();loadOptionalMap();loadOptionalMotion();});
 $('jump-latest').onclick=()=>{if(!active.length)return;setPlaying(false);firstPlay=false;position=radarFrames.length?observationEnd():Math.min(timelineEnd,Math.max(Date.now()/1000,timelineStart));render();};
 function showInfo(show){dismissCredits();$('source-panel').hidden=!show;$('info-toggle').setAttribute('aria-expanded',String(show));if(show)$('source-close').focus();else $('info-toggle').focus();}
 $('info-toggle').onclick=()=>showInfo($('source-panel').hidden);
