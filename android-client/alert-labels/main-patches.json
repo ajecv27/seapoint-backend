@@ -1,0 +1,22 @@
+[
+  {
+    "name": "initial-checking-label",
+    "old": "  String officialAlertStatus = 'Checking official alerts...';",
+    "new": "  String officialAlertStatus = 'Checking alerts…';"
+  },
+  {
+    "name": "first-refresh-checking-label",
+    "old": "          ?? 'Checking official alert coverage...';",
+    "new": "          ?? 'Checking alerts…';"
+  },
+  {
+    "name": "refresh-restored-reports",
+    "old": "        _due(\n          _alertsChecked,\n          _lastAlertsAttempt,\n          _warningInterval,\n        ))",
+    "new": "        shouldRefreshOfficialAlerts(\n          now: now,\n          checkedAt: _alertsChecked,\n          attemptedAt: _lastAlertsAttempt,\n          fromCache: _officialAlertsAreCached,\n          refreshInterval: _warningInterval,\n          retryInterval: _retryInterval,\n        ))"
+  },
+  {
+    "name": "late-cache-guard",
+    "old": "      if (!mounted) return;\n      final restored = report.validCachedAlertsAt(DateTime.now(), fallbackCheckedAt: saved);\n      setState(() {",
+    "new": "      if (!mounted) return;\n      // A slower preferences read must not replace a live report received meanwhile.\n      if (_officialAlertReport != null &&\n          !_officialAlertsAreCached &&\n          _alertsChecked != null) {\n        return;\n      }\n      final restored = report.validCachedAlertsAt(DateTime.now(), fallbackCheckedAt: saved);\n      setState(() {"
+  }
+]

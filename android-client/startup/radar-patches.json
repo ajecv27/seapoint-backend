@@ -1,0 +1,42 @@
+[
+  {
+    "name": "radar-load-watchdog-field",
+    "old": "  Timer? _retryTimer;",
+    "new": "  Timer? _retryTimer;\n  Timer? _loadWatchdog;"
+  },
+  {
+    "name": "cancel-watchdog-on-ready",
+    "old": "            _retryTimer?.cancel();\n\n            setState(() {\n              _ready = true;",
+    "new": "            _retryTimer?.cancel();\n            _loadWatchdog?.cancel();\n\n            setState(() {\n              _ready = true;"
+  },
+  {
+    "name": "test-map-boot-state",
+    "old": "                \"Boolean(document.getElementById('map'))\",",
+    "new": "                \"Boolean(window.seapointBootReady || window.seapointMotionState)\","
+  },
+  {
+    "name": "recover-missed-ready-bridge",
+    "old": "              if (result.toString() != 'true') {\n                _scheduleReload();\n              }",
+    "new": "              if (result.toString() == 'true') {\n                await _webView.runJavaScript(\n                  \"window.SeaPointRadar && window.SeaPointRadar.postMessage('ready');\",\n                );\n              } else {\n                _scheduleReload();\n              }"
+  },
+  {
+    "name": "arm-initial-radar-watchdog",
+    "old": "      ..loadRequest(widget.uri);\n  }\n\n  void _scheduleReload() {",
+    "new": "      ..loadRequest(widget.uri);\n    _startLoadWatchdog();\n  }\n\n  void _startLoadWatchdog() {\n    _loadWatchdog?.cancel();\n    if (!mounted || _ready) return;\n    _loadWatchdog = Timer(const Duration(seconds: 30), () {\n      if (!mounted || _ready) return;\n      setState(() {\n        _failed = true;\n      });\n    });\n  }\n\n  void _scheduleReload() {"
+  },
+  {
+    "name": "rearm-watchdog-on-user-retry",
+    "old": "      _failed = false;\n      _ready = false;\n    });\n\n    _webView.reload();\n  }\n\n  @override\n  void dispose() {",
+    "new": "      _failed = false;\n      _ready = false;\n    });\n\n    _startLoadWatchdog();\n    _webView.reload();\n  }\n\n  @override\n  void dispose() {"
+  },
+  {
+    "name": "dispose-radar-watchdog",
+    "old": "    _retryTimer?.cancel();\n    super.dispose();",
+    "new": "    _retryTimer?.cancel();\n    _loadWatchdog?.cancel();\n    super.dispose();"
+  },
+  {
+    "name": "explain-slow-radar-without-false-unavailable",
+    "old": "'Radar is temporarily unavailable'",
+    "new": "'Radar is taking longer to load'"
+  }
+]
