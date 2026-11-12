@@ -11,7 +11,7 @@ import zlib
 import numpy as np
 from PIL import Image
 
-from forecast_maps import ForecastMaps, precipitation_range, rgba
+from forecast_maps import ForecastMaps, precipitation_range, rgba, sample_rates, MANIFEST_NAME, RENDER_STYLE
 from radar_view import radar_page
 
 
@@ -36,7 +36,7 @@ class ForecastTests(unittest.TestCase):
                             renderer=lambda data, stamp: self.png, clock=lambda: self.now)
 
     def cached_manifest(self):
-        return Path(self.tmp.name) / 'manifest.json'
+        return Path(self.tmp.name) / MANIFEST_NAME
 
     def save_manifest(self, manifest):
         self.cached_manifest().write_text(json.dumps(manifest), encoding='utf-8')
@@ -203,7 +203,7 @@ class ForecastTests(unittest.TestCase):
         replace = Path.replace
 
         def fail_manifest(path, target):
-            if path.name == 'manifest.json.tmp':
+            if path.name == MANIFEST_NAME + '.tmp':
                 raise OSError('Disk publication failed')
             return replace(path, target)
 
@@ -295,9 +295,62 @@ class ForecastTests(unittest.TestCase):
         result = rgba(np.array([[0., .05, .1, 2.5, 60., np.nan]]))
         self.assertEqual(result[0, 0, 3], 0)
         self.assertEqual(result[0, 1, 3], 0)
-        self.assertEqual(result[0, 2, 3], 200)
+        self.assertEqual(result[0, 2, 3], 0)
         self.assertEqual(result[0, 5, 3], 0)
         self.assertEqual(result[0, 3, :3].tolist(), [106, 78, 211])
+
+    def test_light_rain_opacity_has_no_solid_threshold_outline(self):
+        rates = np.array([[.099, .1, .15, .2, .3, .4, .5, .6, 2.5, 60, np.nan, np.inf]])
+        alpha = rgba(rates)[0, :, 3]
+        self.assertEqual(alpha[:2].tolist(), [0, 0])
+        self.assertTrue(np.all(np.diff(alpha[1:8].astype(int)) > 0))
+        self.assertEqual(alpha[7:10].tolist(), [200, 200, 200])
+        self.assertEqual(alpha[-2:].tolist(), [0, 0])
+        # The intensity colour scale itself remains unchanged.
+        self.assertEqual(rgba(np.array([[2.5]]))[0, 0].tolist(), [106, 78, 211, 200])
+
+    def test_display_sampling_preserves_model_points_and_linear_fields(self):
+        values = np.arange(6)[:, None] * 10 + np.arange(7)[None, :]
+        x, y = np.array([1., 1.3, 2., 2.8, 4.]), np.array([1., 1.2, 2., 3.6, 4.])
+        np.testing.assert_allclose(sample_rates(values, x, y), y[:, None] * 10 + x[None, :], atol=1e-10)
+
+    def test_display_sampling_cannot_create_rain_or_intensity_extrema(self):
+        values = np.zeros((6, 6))
+        values[2:4, 2:4] = [[.4, 8.], [2., 15.]]
+        x, y = np.linspace(.02, 4.98, 143), np.linspace(.02, 4.98, 137)
+        sampled = sample_rates(values, x, y)
+        x0, y0 = np.floor(x).astype(int), np.floor(y).astype(int)
+        surrounding = np.stack([values[(y0 + dy)[:, None], (x0 + dx)[None, :]]
+                                for dy in (0, 1) for dx in (0, 1)])
+        self.assertTrue(np.all(sampled >= surrounding.min(axis=0)))
+        self.assertTrue(np.all(sampled <= surrounding.max(axis=0)))
+        self.assertTrue(np.all(sampled[surrounding.max(axis=0) == 0] == 0))
+
+    def test_display_sampling_wraps_longitude_and_clamps_poles(self):
+        values = np.ones((4, 6))
+        values[:, 0] = 3
+        np.testing.assert_allclose(sample_rates(values, np.array([-1., 0., 6.]),
+                                                np.array([0., 3.])), [[1, 3, 3], [1, 3, 3]])
+
+    def test_old_style_cache_cannot_be_republished_as_new_style(self):
+        service = self.service()
+        service._build(self.cycle)
+        old = json.loads(json.dumps(service.manifest))
+        for frame in old['frames']:
+            new_path = Path(self.tmp.name) / frame['url'].split('/')[-1]
+            old_path = new_path.with_name(new_path.name.replace('-' + RENDER_STYLE, ''))
+            new_path.rename(old_path)
+            frame['url'] = frame['url'].replace('-' + RENDER_STYLE, '')
+        self.cached_manifest().unlink()
+        (Path(self.tmp.name) / 'manifest.json').write_text(json.dumps(old))
+        restored = self.service()
+        self.assertIsNone(restored.manifest)
+        self.assertEqual(restored.image(old['frames'][0]['url'].split('/')[-1]), self.png)
+        self.reads.clear()
+        restored._build(self.cycle)
+        self.assertEqual(len(self.reads), 100)
+        self.assertTrue(all(frame['url'].endswith('-' + RENDER_STYLE + '.png')
+                            for frame in restored.manifest['frames']))
 
     def test_location_name_cannot_inject_script(self):
         page = radar_page(17.12, -61.8, '</script><script>alert(1)</script>')
