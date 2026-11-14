@@ -210,7 +210,11 @@ function prefetchFollowingMotion(a,b){
 function boundedMotionFailure(id){motionFailures.set(id,Date.now()+60000);while(motionFailures.size>12)motionFailures.delete(motionFailures.keys().next().value);}
 function startMotionPreparation(){
  if(motionJob||!motionWanted||motionViewChanging||!rainMotionRenderer||!rainMotionRenderer.supported)return;
- const job=motionWanted;motionJob=job;motionReadyKey='';hideRainMotion();motionStatus='preparing';
+ const job=motionWanted;motionJob=job;motionReadyKey='';
+ // Playback retains its last presentation until the next pair is ready.
+ // Replacing it with the pair's first source image makes rain jump backwards.
+ if(!playing)hideRainMotion();
+ motionStatus='preparing';
  Promise.all([captureRainFrame(job.a,job.first),captureRainFrame(job.b,job.second)]).then(async frames=>{
   if(motionWanted!==job||motionViewChanging)return;
   if(frames[0].pixels.width!==frames[1].pixels.width||frames[0].pixels.height!==frames[1].pixels.height)throw new Error('Frame dimensions differ');
@@ -337,14 +341,20 @@ function render(){
   setMapStatus('GAP');$('detail').textContent='Weather frame unavailable · retrying';lastDetail='';
   $('notice').textContent='No frame available at the selected time';$('notice').hidden=false;return true;
  }
- const next=new Set([first,second]);for(const layer of visibleLayers)if(!next.has(layer))layer.setOpacity(0);
  // Original timestamps show the actual image. Verified patterns move;
  // weak matches grow/dissipate continuously rather than jumping at halfway.
  const canInterpolate=a!==b && gap>0 && gap<=(kind==='observed'?900:5400) && (kind!=='forecast'||sameForecastSource(a,b)) && blend>0 && blend<1;
- if(!canInterpolate || !renderMotionPair(a,b,first,second,blend)){
+ const motionRendered=canInterpolate&&renderMotionPair(a,b,first,second,blend);
+ if(motionBuffered){
+  // Keep both the GPU pixels and source-layer opacities untouched. The clock
+  // buffers too, so no earlier frame appears while a worker catches up.
+  $('notice').textContent='Preparing smooth rain playback…';$('notice').hidden=false;
+  return false;
+ }
+ const next=new Set([first,second]);for(const layer of visibleLayers)if(!next.has(layer))layer.setOpacity(0);
+ if(!motionRendered){
   hideRainMotion();
   if(first===second){first.setOpacity(.78);}
-  else if(motionBuffered){first.setOpacity(.78);second.setOpacity(0);}
   else if(canInterpolate){
    // A smooth, opacity-corrected image transition remains usable without GPU
    // motion or readable pixels; no unverified path is assigned to a rain cell.
