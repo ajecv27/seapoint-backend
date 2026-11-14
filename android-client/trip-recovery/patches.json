@@ -1,0 +1,137 @@
+[
+  {
+    "path": "lib/navigation_screen.dart",
+    "backup_name": "navigation_screen.dart.bak",
+    "markers": [
+      "class NavigationScreen extends StatefulWidget",
+      "class _NavigationScreenState"
+    ],
+    "patches": [
+      {
+        "name": "navigation_screen.dart-1",
+        "old": "import 'trip_recorder.dart';\nimport 'trip_widgets.dart';\nimport 'trip_map.dart';\n\nclass NavigationScreen extends StatefulWidget {\n  const NavigationScreen({super.key});\n",
+        "new": "import 'trip_recorder.dart';\nimport 'trip_widgets.dart';\nimport 'trip_map.dart';\nimport 'trip_journal.dart';\nimport 'trip_storage.dart';\n\nclass NavigationScreen extends StatefulWidget {\n  const NavigationScreen({super.key});\n"
+      },
+      {
+        "name": "navigation_screen.dart-2",
+        "old": "      draftFeet + safetyClearanceFeet;\n}\n\nclass _NavigationScreenState extends State<NavigationScreen> {\n  static const double _defaultCruisingSpeedKnots = 15.0;\n  static const double _defaultSafetyDepthMetres = 2.0;\n\n",
+        "new": "      draftFeet + safetyClearanceFeet;\n}\n\nclass _NavigationScreenState extends State<NavigationScreen> with WidgetsBindingObserver {\n  static const double _defaultCruisingSpeedKnots = 15.0;\n  static const double _defaultSafetyDepthMetres = 2.0;\n\n"
+      },
+      {
+        "name": "navigation_screen.dart-3",
+        "old": "  LatLng? _endPoint;\n\n  List<LatLng> _plannedRoute = [];\n  final TripRecorder _tripRecorder = TripRecorder();\n  GpsFix? _latestGpsFix;\n  TripSummary? _lastTripSummary;\n  Timer? _tripTimer;\n",
+        "new": "  LatLng? _endPoint;\n\n  List<LatLng> _plannedRoute = [];\n  TripRecorder _tripRecorder = TripRecorder();\n  TripStore? _tripStore;\n  bool _restoringTrip = true;\n  bool _tripSaveFailed = false;\n  DateTime? _lastTripCheckpoint;\n  GpsFix? _latestGpsFix;\n  TripSummary? _lastTripSummary;\n  Timer? _tripTimer;\n"
+      },
+      {
+        "name": "navigation_screen.dart-4",
+        "old": "  @override\n  void initState() {\n    super.initState();\n    _startCompass();\n    _startLocation();\n  }\n\n  @override\n  void dispose() {\n    _compassSubscription?.cancel();\n    _positionSubscription?.cancel();\n    _tripTimer?.cancel();\n",
+        "new": "  @override\n  void initState() {\n    super.initState();\n    WidgetsBinding.instance.addObserver(this);\n    _startCompass();\n    _startLocation();\n    WidgetsBinding.instance.addPostFrameCallback((_) {\n      if (mounted) unawaited(_restoreSavedTrip());\n    });\n  }\n\n  @override\n  void dispose() {\n    _saveTripClock();\n    WidgetsBinding.instance.removeObserver(this);\n    _compassSubscription?.cancel();\n    _positionSubscription?.cancel();\n    _tripTimer?.cancel();\n"
+      },
+      {
+        "name": "navigation_screen.dart-5",
+        "old": "    _mapController?.dispose();\n    _routeRequestId++;\n    super.dispose();\n  }\n\n  String _styleForMode(_MapMode mode) {\n",
+        "new": "    _mapController?.dispose();\n    _routeRequestId++;\n    super.dispose();\n  }\n\n  @override\n  void didChangeAppLifecycleState(AppLifecycleState state) {\n    if (state == AppLifecycleState.inactive || state == AppLifecycleState.paused ||\n        state == AppLifecycleState.detached) {\n      _saveTripClock();\n    }\n  }\n\n  void _tripSaveError(Object error, StackTrace stack) {\n    debugPrint('Trip saving unavailable: ${error.runtimeType}');\n    if (!mounted || _tripSaveFailed) return;\n    setState(() { _tripSaveFailed = true; });\n    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(\n      content: Text('Trip saving is unavailable. Keep SeaPoint open to retain this recording.'),\n    ));\n  }\n\n  Future<void> _persistTrip(Future<void> Function(TripStore) save) async {\n    try {\n      final store = _tripStore;\n      if (store == null) throw StateError('Trip storage unavailable');\n      await save(store);\n    } catch (error, stack) {\n      _tripSaveError(error, stack);\n    }\n  }\n\n  void _saveTripClock() {\n    if (!_trackingTrip) return;\n    final now = DateTime.now();\n    _lastTripCheckpoint = now;\n    unawaited(_persistTrip((store) => store.record(\n      TripJournal.clock(now, _activeLegIndex, _destinationReached))));\n  }\n\n  void _startTripTimer() {\n    _tripTimer?.cancel();\n    _tripTimer = Timer.periodic(const Duration(seconds: 1), (_) {\n      if (!mounted || !_trackingTrip) return;\n      final now = DateTime.now();\n      setState(() {\n        if (!_freshFix(_tripRecorder.lastAcceptedFix, now)) {\n          _locationStatus = 'Waiting for fresh GPS \u2022 trip timer continues';\n        }\n      });\n      if (_lastTripCheckpoint == null ||\n          now.difference(_lastTripCheckpoint!) >= const Duration(seconds: 5)) {\n        _saveTripClock();\n      }\n    });\n  }\n\n  Future<void> _restoreSavedTrip() async {\n    try {\n      final store = await openTripStore();\n      _tripStore = store;\n      final saved = await store.load();\n      if (!mounted || saved == null) return;\n      if (!saved.recorder.running) {\n        _applySavedTrip(saved, tracking: false);\n        return;\n      }\n      final choice = await showDialog<TripRecoveryChoice>(\n        context: context,\n        barrierDismissible: false,\n        builder: (_) => TripRecoveryDialog(\n          summary: saved.recorder.snapshot(saved.savedAt), partial: saved.partial),\n      );\n      if (!mounted) return;\n      if (choice == TripRecoveryChoice.discard) {\n        await _persistTrip((store) => store.discard());\n        return;\n      }\n      if (choice == TripRecoveryChoice.resume) {\n        final now = DateTime.now();\n        await _persistTrip((store) => store.resume(saved, now));\n        if (!mounted) return;\n        saved.recorder.resumeAfterInterruption();\n        _applySavedTrip(saved, tracking: true);\n        _startTripTimer();\n      } else if (choice == TripRecoveryChoice.finish) {\n        // Ending at the last saved clock avoids treating hours with the app\n        // closed as measured travel or changing an already completed average.\n        saved.recorder.stop(saved.savedAt);\n        await _persistTrip((store) => store.finishRecovered(saved));\n        if (!mounted) return;\n        _applySavedTrip(saved, tracking: false);\n        await _showTripSummary();\n      }\n    } catch (error, stack) {\n      _tripSaveError(error, stack);\n    } finally {\n      if (mounted) setState(() { _restoringTrip = false; });\n    }\n  }\n\n  void _applySavedTrip(TripRecovery saved, {required bool tracking}) {\n    setState(() {\n      _tripRecorder = saved.recorder;\n      _plannedRoute = saved.route.map((p) => LatLng(p[0], p[1])).toList();\n      _startPoint = _plannedRoute.first;\n      _endPoint = _plannedRoute.last;\n      _activeLegIndex = saved.activeLeg;\n      _destinationReached = saved.arrived;\n      _trackingTrip = tracking;\n      _lastTripSummary = tracking ? null : _tripRecorder.snapshot(saved.savedAt);\n      _lastTripCheckpoint = DateTime.now();\n      if (tracking) _locationStatus = 'Waiting for fresh GPS \u2022 saved trip restored';\n    });\n    unawaited(_refreshMapData());\n    unawaited(_refreshCurrentMarker());\n  }\n\n  String _styleForMode(_MapMode mode) {\n"
+      },
+      {
+        "name": "navigation_screen.dart-6",
+        "old": "      _locationStatus = 'GPS accuracy \u00b1${fix.accuracyMetres.toStringAsFixed(0)} m';\n      if (_trackingTrip) _advanceActiveLeg(point, fix.accuracyMetres);\n    });\n    unawaited(_refreshMapData());\n    if (!_centeredOnUser && _mapController != null) {\n      _centeredOnUser = true;\n",
+        "new": "      _locationStatus = 'GPS accuracy \u00b1${fix.accuracyMetres.toStringAsFixed(0)} m';\n      if (_trackingTrip) _advanceActiveLeg(point, fix.accuracyMetres);\n    });\n    if (_trackingTrip) {\n      _lastTripCheckpoint = now;\n      unawaited(_persistTrip((store) => store.record(\n        TripJournal.fix(fix, now, _activeLegIndex, _destinationReached))));\n    }\n    unawaited(_refreshMapData());\n    if (!_centeredOnUser && _mapController != null) {\n      _centeredOnUser = true;\n"
+      },
+      {
+        "name": "navigation_screen.dart-7",
+        "old": "  // Starting point is selected by the user,\n  // independently of the device's current GPS location.\n  void _selectRoutePoint(LatLng point) {\n    if (_startPoint == null) {\n      _routeRequestId++;\n\n",
+        "new": "  // Starting point is selected by the user,\n  // independently of the device's current GPS location.\n  void _selectRoutePoint(LatLng point) {\n    if (_restoringTrip) return;\n    if (_startPoint == null) {\n      _routeRequestId++;\n\n"
+      },
+      {
+        "name": "navigation_screen.dart-8",
+        "old": "  }\n\n  void _startTrip() {\n    if (_plannedRoute.length < 2 || _trackingTrip) return;\n    final now = DateTime.now();\n    if (!_freshFix(_latestGpsFix, now)) {\n",
+        "new": "  }\n\n  void _startTrip() {\n    if (_restoringTrip) return;\n    if (_plannedRoute.length < 2 || _trackingTrip) return;\n    final now = DateTime.now();\n    if (!_freshFix(_latestGpsFix, now)) {\n"
+      },
+      {
+        "name": "navigation_screen.dart-9",
+        "old": "      _trackingTrip = true;\n      _mapToolsExpanded = false;\n      _tripPanelExpanded = false;\n    });\n    _tripTimer?.cancel();\n    _tripTimer = Timer.periodic(const Duration(seconds: 1), (_) {\n      if (!mounted || !_trackingTrip) return;\n      setState(() {\n        if (!_freshFix(_tripRecorder.lastAcceptedFix, DateTime.now())) {\n          _locationStatus = 'Waiting for fresh GPS \u2022 trip timer continues';\n        }\n      });\n    });\n    unawaited(_refreshCurrentMarker());\n    unawaited(_refreshMapData());\n    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(\n",
+        "new": "      _trackingTrip = true;\n      _mapToolsExpanded = false;\n      _tripPanelExpanded = false;\n      _tripSaveFailed = false;\n    });\n    _lastTripCheckpoint = now;\n    unawaited(_persistTrip((store) => store.begin(TripJournal.start(now,\n      _plannedRoute.map((p) => [p.latitude, p.longitude]).toList(),\n      initialFix: _tripRecorder.lastAcceptedFix))));\n    _startTripTimer();\n    unawaited(_refreshCurrentMarker());\n    unawaited(_refreshMapData());\n    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(\n"
+      },
+      {
+        "name": "navigation_screen.dart-10",
+        "old": "      _trackingTrip = false;\n      _tripPanelExpanded = false;\n    });\n    await _refreshCurrentMarker();\n    await _showTripSummary();\n  }\n",
+        "new": "      _trackingTrip = false;\n      _tripPanelExpanded = false;\n    });\n    await _persistTrip((store) => store.finish(_lastTripSummary!.endedAt!));\n    await _refreshCurrentMarker();\n    await _showTripSummary();\n  }\n"
+      },
+      {
+        "name": "navigation_screen.dart-11",
+        "old": "  }\n\n  Future<void> _newRoute() async {\n    if (_trackingTrip) await _stopTrip();\n    if (!mounted) return;\n    _routeRequestId++;\n",
+        "new": "  }\n\n  Future<void> _newRoute() async {\n    if (_restoringTrip) return;\n    if (_trackingTrip) await _stopTrip();\n    if (!mounted) return;\n    _routeRequestId++;\n"
+      },
+      {
+        "name": "navigation_screen.dart-12",
+        "old": "                    ? _tripRecorder.snapshot(DateTime.now()) : null,\n                onShowSummary: _lastTripSummary == null ? null\n                    : () => unawaited(_showTripSummary()),\n                locationStatus: _locationStatus,\n                compactTrip: !_tripPanelExpanded,\n                onToggleCompactTrip: () {\n                  setState(() {\n",
+        "new": "                    ? _tripRecorder.snapshot(DateTime.now()) : null,\n                onShowSummary: _lastTripSummary == null ? null\n                    : () => unawaited(_showTripSummary()),\n                locationStatus: _restoringTrip ? 'Restoring saved trip\u2026'\n                    : _tripSaveFailed ? '$_locationStatus \u2022 Trip not saved' : _locationStatus,\n                compactTrip: !_tripPanelExpanded,\n                onToggleCompactTrip: () {\n                  setState(() {\n"
+      }
+    ]
+  },
+  {
+    "path": "lib/trip_recorder.dart",
+    "backup_name": "trip_recorder.dart.bak",
+    "markers": [
+      "class TripRecorder {",
+      "class GpsFix {"
+    ],
+    "patches": [
+      {
+        "name": "trip_recorder.dart-1",
+        "old": "  int _gapCount = 0;\n  bool _running = false;\n  bool _needsTrackReanchor = false;\n  TripSummary? _finished;\n\n  bool get running => _running;\n",
+        "new": "  int _gapCount = 0;\n  bool _running = false;\n  bool _needsTrackReanchor = false;\n  bool _interruptionPending = false;\n  TripSummary? _finished;\n\n  bool get running => _running;\n"
+      },
+      {
+        "name": "trip_recorder.dart-2",
+        "old": "    _gapCount = 0;\n    _running = false;\n    _needsTrackReanchor = false;\n    _finished = null;\n  }\n\n",
+        "new": "    _gapCount = 0;\n    _running = false;\n    _needsTrackReanchor = false;\n    _interruptionPending = false;\n    _finished = null;\n  }\n\n"
+      },
+      {
+        "name": "trip_recorder.dart-3",
+        "old": "        ? 0.0\n        : fix.timestamp.difference(previous.timestamp).inMicroseconds / 1e6;\n    final gap = previous != null &&\n        fix.timestamp.difference(previous.timestamp) > segmentGap;\n    final displacement = previous == null ? 0.0 : distanceMetres(previous, fix);\n    final accuracyAllowance = previous == null\n        ? fix.accuracyMetres\n",
+        "new": "        ? 0.0\n        : fix.timestamp.difference(previous.timestamp).inMicroseconds / 1e6;\n    final gap = previous != null &&\n        (_interruptionPending ||\n            fix.timestamp.difference(previous.timestamp) > segmentGap);\n    final displacement = previous == null ? 0.0 : distanceMetres(previous, fix);\n    final accuracyAllowance = previous == null\n        ? fix.accuracyMetres\n"
+      },
+      {
+        "name": "trip_recorder.dart-4",
+        "old": "    if (stationaryNoise) _needsTrackReanchor = true;\n\n    _lastAcceptedFix = fix;\n    _fixCount++;\n    double? derivedSpeed;\n    if (trackAnchor != null) {\n",
+        "new": "    if (stationaryNoise) _needsTrackReanchor = true;\n\n    _lastAcceptedFix = fix;\n    _interruptionPending = false;\n    _fixCount++;\n    double? derivedSpeed;\n    if (trackAnchor != null) {\n"
+      },
+      {
+        "name": "trip_recorder.dart-5",
+        "old": "    return value;\n  }\n\n  TripSummary snapshot(DateTime now) {\n    if (_finished != null) return _finished!;\n    final clock = _clock(now);\n",
+        "new": "    return value;\n  }\n\n  /// A restarted process has no measurements for its time away. Begin a new\n  /// segment even after a brief interruption, without inventing connecting travel.\n  void resumeAfterInterruption() {\n    if (!_running) throw StateError('Cannot resume a completed trip');\n    _interruptionPending = _lastAcceptedFix != null;\n    _needsTrackReanchor = false;\n    _currentSpeedMps = null;\n    _speedMeasuredAt = null;\n    _gpsCourse = null;\n    _courseMeasuredAt = null;\n  }\n\n  TripSummary snapshot(DateTime now) {\n    if (_finished != null) return _finished!;\n    final clock = _clock(now);\n"
+      }
+    ]
+  },
+  {
+    "path": "lib/trip_widgets.dart",
+    "backup_name": "trip_widgets.dart.bak",
+    "markers": [
+      "class TripStatsGrid extends StatelessWidget",
+      "class TripSummaryDialog extends StatelessWidget"
+    ],
+    "patches": [
+      {
+        "name": "trip_widgets.dart-1",
+        "old": "import 'package:flutter/material.dart';\n\nimport 'trip_recorder.dart';\n\n/// Live readings from the recorded GPS trip, arranged for a compact map panel.\nclass TripStatsGrid extends StatelessWidget {\n",
+        "new": "import 'package:flutter/material.dart';\n\nimport 'trip_recorder.dart';\n\nenum TripRecoveryChoice { resume, finish, discard }\n\nclass TripRecoveryDialog extends StatelessWidget {\n  const TripRecoveryDialog(\n      {super.key, required this.summary, required this.partial});\n  final TripSummary summary;\n  final bool partial;\n\n  @override\n  Widget build(BuildContext context) => PopScope(\n        canPop: false,\n        child: AlertDialog(\n          title: const Text('Saved trip found'),\n          content: SingleChildScrollView(\n            child: Column(\n              mainAxisSize: MainAxisSize.min,\n              crossAxisAlignment: CrossAxisAlignment.start,\n              children: [\n                Text(\n                    '${_number(summary.distanceNm, 2, 'NM')} recorded \u00b7 ${_duration(summary.elapsed)}'),\n                const SizedBox(height: 12),\n                const Text(\n                    'Continue with the original trip start time, or finish at the last saved time. '\n                    'Travel while SeaPoint was closed is not recorded.'),\n                if (partial) ...[\n                  const SizedBox(height: 8),\n                  const Text(\n                      'The last save was interrupted. The saved portion of your trip is available.'),\n                ],\n              ],\n            ),\n          ),\n          actions: [\n            TextButton(\n                onPressed: () =>\n                    Navigator.of(context).pop(TripRecoveryChoice.discard),\n                child: const Text('Discard')),\n            TextButton(\n                onPressed: () =>\n                    Navigator.of(context).pop(TripRecoveryChoice.finish),\n                child: const Text('Finish saved trip')),\n            FilledButton(\n                onPressed: () =>\n                    Navigator.of(context).pop(TripRecoveryChoice.resume),\n                child: const Text('Continue trip')),\n          ],\n        ),\n      );\n}\n\n/// Live readings from the recorded GPS trip, arranged for a compact map panel.\nclass TripStatsGrid extends StatelessWidget {\n"
+      }
+    ]
+  },
+  {
+    "path": "pubspec.yaml",
+    "backup_name": "pubspec.yaml.bak",
+    "markers": [
+      "name: seapoint",
+      "\ndependencies:\n"
+    ],
+    "patches": [
+      {
+        "name": "private-file-storage",
+        "old": "  shared_preferences: ^2.5.6\n",
+        "new": "  shared_preferences: ^2.5.6\n  path_provider: ^2.1.6\n"
+      }
+    ]
+  }
+]
