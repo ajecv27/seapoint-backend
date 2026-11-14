@@ -2,7 +2,8 @@
 import json
 import sys
 import time
-from marine_routing import COASTLINE_POLICY
+# Keep this stdlib-only subprocess independent of the app import path.
+COASTLINE_POLICY = 'osm-primary-gshhg-unmatched-v1'
 
 mode = sys.argv[1]
 if mode == 'slow-start':
