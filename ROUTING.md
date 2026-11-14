@@ -43,7 +43,7 @@ identify this policy as `osm-primary-gshhg-unmatched-v1`.
 Coarse-grid connections must meet the existing offshore clearance. Near-shore
 connectors expand their local search to find harbour entrances beyond the direct
 endpoint box; endpoint adjustments must also meet the mandatory shoreline buffer.
-The 75-metre maximum adjustment, search budgets and final land checks remain.
+The 75-metre maximum adjustment, route search budgets and final land checks remain.
 
 OpenStreetMap data: © OpenStreetMap contributors, ODbL 1.0,
 https://www.openstreetmap.org/copyright . GSHHG: Wessel and Smith, LGPL,
@@ -52,6 +52,15 @@ feature counts accompany the release. The phone update adds these credits to
 the map attribution control.
 
 ## Deployment and validation
+
+Source matching is precomputed in `marine_routing/coast_policy.json` so a sleeping
+host does not repeat whole-region polygon intersections. Runtime verifies its
+checksum, dataset digest, feature counts and indices before using it. CI compares
+the complete selection against the original geometric predicates. Regenerate with
+`python -m coast_build.policy_index` after changing the immutable source release,
+then update the printed index digest in `coast_data.py`. Initialization is bounded
+at 75 seconds to accommodate a throttled cold host; route deadlines are unchanged.
+Health exposes a generic startup error code and worker logs omit coordinates.
 
 Render continues using `pip install -r requirements.txt` and
 `python cloud_server.py`. HTTP binds before the worker loads its geometry.

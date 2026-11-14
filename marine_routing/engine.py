@@ -61,7 +61,7 @@ def initialize():
     geometries, osm, manifest = load_coast()
     # OSM resolves marina inlets missing from the older GSHHG outline.
     count = manifest['sources'][0]['features']
-    LAND = STRtree(select_routing_coast(geometries[:count], osm))
+    LAND = STRtree(select_routing_coast(geometries[:count], osm, manifest))
     _prepared_coastline.cache_clear()
     OSM_LAND = STRtree(osm)
     DATASET = manifest
