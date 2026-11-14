@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
-      SEAPOINT_COAST_WORK: ${{ runner.temp }}/coast-work
+      SEAPOINT_COAST_WORK: coast-work
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       COAST_TAG: routing-coast-2026.11.14.1
