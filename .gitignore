@@ -5,3 +5,4 @@ forecast-cache/
 arome-cache/
 _site/
 .radar-cache/
+.tide-cache/
