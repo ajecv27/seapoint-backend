@@ -82,3 +82,20 @@ check.
 Pixel regressions also verify independent cells moving in opposite directions,
 verified movement with one missing directional confidence field, rejection of
 confident contradictory vectors, and common-field transfer from the worker.
+
+## Motion-pair handover
+
+During active playback, an unfinished motion pair retains the current GPU pixels
+and source-layer opacities while the animation clock buffers. It does not replace
+the current presentation with the new pair's earlier source frame. Once the pair
+is ready, the renderer presents its selected time normally. Scrubbing, map moves,
+failed motion preparation and unsupported GPU fallback retain their existing
+behavior. This fixes a display handover; it does not change source rain data or
+force genuine forecast changes to travel in one direction.
+
+`tests/browser_rain_handover.py` deliberately delays preparation at an hourly
+boundary. It checks that the displayed pixels and layer opacities remain intact,
+that playback remains selected, and that the translated rain advances after the
+worker resumes. The same case fails against the prior player because the visible
+canvas is hidden. Set `SEAPOINT_STATIC_SITE` to a built static site to reuse its
+pinned map libraries, or let the test retrieve the normal public library URLs.
