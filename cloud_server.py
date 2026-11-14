@@ -16,10 +16,12 @@ from zoneinfo import ZoneInfo
 
 from pypdf import PdfReader
 from forecast_runtime import ForecastRuntime
+from marine_routing.runtime import RoutingRuntime
 from official_alerts import OfficialAlertService, parse_marine_locations, parse_marine_cancellations
 from basemap_service import basemap_document
 
 FORECAST_MAPS = ForecastRuntime()
+MARINE_ROUTES = RoutingRuntime()
 
 
 SOURCE = "https://www.antiguamet.com/Daily_FCast.html"
@@ -1406,6 +1408,11 @@ class Handler(
     BaseHTTPRequestHandler
 ):
 
+    def log_message(self, format, *args):
+        if urlparse(self.path).path == '/route':
+            return
+        super().log_message(format, *args)
+
     def send_cors_headers(
         self,
     ):
@@ -1548,6 +1555,25 @@ class Handler(
         query = parse_qs(
             parsed.query
         )
+
+        if path == "/routing/health":
+            data = MARINE_ROUTES.health()
+            self.send_json(data, 200 if data['status'] == 'ready' else 503)
+            return
+
+        if path == "/route":
+            try:
+                values = parse_qs(parsed.query, max_num_fields=4, keep_blank_values=True)
+                names = {'start_lon', 'start_lat', 'end_lon', 'end_lat'}
+                if set(values) != names or any(len(v) != 1 or len(v[0]) > 40 for v in values.values()):
+                    raise ValueError('Choose a start point and destination')
+                start = (float(values['start_lon'][0]), float(values['start_lat'][0]))
+                finish = (float(values['end_lon'][0]), float(values['end_lat'][0]))
+                status, data = MARINE_ROUTES.route(start, finish)
+                self.send_json(data, status)
+            except ValueError:
+                self.send_json({'status': 'error', 'error': 'Invalid route coordinates'}, 400)
+            return
 
         if path == "/rain-look-preview":
             self.send_content(
@@ -1826,24 +1852,22 @@ class Handler(
         )
 
 
-PORT = int(
-    os.environ.get(
-        "PORT",
-        "8000",
-    )
-)
+def main():
+    port = int(os.environ.get('PORT', '8000'))
+    class Server(ThreadingHTTPServer):
+        daemon_threads = True
+    server = Server(('0.0.0.0', port), Handler)
+    # Publish HTTP before loading routing geometry in its isolated worker.
+    # The legacy forecast endpoints still start their providers on demand;
+    # the published radar uses its separately generated static forecast.
+    MARINE_ROUTES.start()
+    print(f'SeaPoint backend running on port {port}', flush=True)
+    try:
+        server.serve_forever()
+    finally:
+        server.server_close()
+        MARINE_ROUTES.close()
 
-print(
-    f"SeaPoint backend running on port {PORT}"
-)
 
-# Bind HTTP before importing providers or restoring their image caches.
-server = ThreadingHTTPServer(
-    (
-        "0.0.0.0",
-        PORT,
-    ),
-    Handler,
-)
-FORECAST_MAPS.start()
-server.serve_forever()
+if __name__ == '__main__':
+    main()

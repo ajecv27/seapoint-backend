@@ -1,5 +1,3 @@
-pypdf
-tzdata
-numpy>=1.26,<3
-Pillow>=10,<13
-eccodes>=2.40,<3
+-r requirements-radar.txt
+shapely>=2.1.2,<2.2
+seapoint-coast-data @ https://github.com/ajecv27/seapoint-backend/releases/download/routing-coast-2026.11.14.1/seapoint_coast_data-2026.11.14.1-py3-none-any.whl#sha256=58f621a1f65ab03f5f097caecc9b1f27f2d7ac442867ce9fd5bb98a1574fba07

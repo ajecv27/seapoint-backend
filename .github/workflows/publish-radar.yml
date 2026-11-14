@@ -18,6 +18,7 @@ on:
       - 'forecast_service.py'
       - 'arome_maps.py'
       - 'requirements.txt'
+      - 'requirements-radar.txt'
 
 permissions:
   contents: read
@@ -41,6 +42,7 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
+          cache-dependency-path: requirements-radar.txt
       - name: Restore model downloads and retained image generations
         uses: actions/cache/restore@v4
         with:
@@ -50,7 +52,7 @@ jobs:
           key: radar-static-v1-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: radar-static-v1-
       - name: Install forecast decoders
-        run: python -m pip install -r requirements.txt
+        run: python -m pip install -r requirements-radar.txt
       - name: Validate publication and provider selection
         run: |
           python -m unittest discover -s tests -p 'test_static_site.py'

@@ -1,0 +1,58 @@
+name: Publish pinned routing coastline
+
+on:
+  push:
+    branches: [main, codex/hosted-routing]
+    paths:
+      - 'coast_build/**'
+      - '.github/workflows/publish-routing-coast.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: routing-coast-2026-11-14
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      SEAPOINT_COAST_WORK: coast-work
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      COAST_TAG: routing-coast-2026.11.14.1
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check immutable release
+        id: release
+        run: |
+          if gh release view "$COAST_TAG" >/dev/null 2>&1; then
+            echo 'exists=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'exists=false' >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-python@v5
+        if: steps.release.outputs.exists != 'true'
+        with:
+          python-version: '3.12'
+      - name: Install public-data clipping tools
+        if: steps.release.outputs.exists != 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y gdal-bin
+          python -m pip install 'shapely==2.1.2'
+      - name: Download checksum-pinned sources and clip without simplification
+        if: steps.release.outputs.exists != 'true'
+        run: |
+          python coast_build/download.py
+          python coast_build/prepare.py
+          python coast_build/wheel.py
+      - name: Publish public-data wheel for build-time installation
+        if: steps.release.outputs.exists != 'true'
+        run: |
+          gh release create "$COAST_TAG" dist/* --target "$GITHUB_SHA" \
+            --title 'Pinned Caribbean routing coastline 2026-11-14' \
+            --notes 'Full-resolution public OSM and GSHHG data clipped to Caribbean coverage; no coastline simplification. OSM data: OpenStreetMap contributors, ODbL 1.0 (https://www.openstreetmap.org/copyright). GSHHG 2.3.7: LGPL 3.0-or-later (https://www.soest.hawaii.edu/pwessel/gshhg/). Source archives are checksum-pinned and the build scripts are in coast_build. This is coastline data, not nautical chart or depth data.'
