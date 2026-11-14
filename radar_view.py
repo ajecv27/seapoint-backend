@@ -523,8 +523,8 @@ async function loadForecast(){
   const validBounds=b=>Array.isArray(b)&&b.length===2&&b.every(p=>Array.isArray(p)&&p.length===2&&p.every(Number.isFinite))&&b[0][0]<b[1][0]&&b[0][1]<b[1][1]&&b.every(p=>Math.abs(p[0])<=85&&Math.abs(p[1])<=180);
   const upcoming=data.frames.map(f=>({...f,kind:'forecast',provider:f.provider||'noaa-gfs',model_run:f.model_run??data.model_run,bounds:f.bounds||data.bounds,forecast_until:data.forecast_until})).filter(f=>Number.isFinite(f.time)&&f.url&&validBounds(f.bounds)&&['arome-antilles','noaa-gfs'].includes(f.provider)&&validForecastFrame(f,now));
   if(upcoming.length<2||!upcoming.some(frame=>frame.time>now)||(data.forecast_until!==undefined&&data.forecast_until<=now))throw new Error();
-  if(upcoming.some(frame=>frame.global_tiles))await optionalResource('/global-rain.js?v=1');
-  $('coverage-details').textContent=upcoming.some(frame=>frame.global_tiles)?'Forecast coverage: worldwide between 85°S and 85°N. NOAA GFS supplies global rain (~28 km model grid), with finer AROME Antilles data (~2.5 km) in its Caribbean footprint when available. Only the visible map area loads. Rain rates use mm/h. Observed radar coverage varies by location.':'Forecast coverage: eastern Caribbean, 10–23°N and 68–55°W. Rain rates use mm/h. Observed radar coverage varies by location.';
+  if(upcoming.some(frame=>frame.global_tiles))await optionalResource('/global-rain.js?v=2');
+  $('coverage-details').textContent=upcoming.some(frame=>frame.global_tiles)?'Forecast coverage: worldwide between 85°S and 85°N. NOAA GFS supplies global rain (~28 km model grid), with finer AROME Antilles data (~2.5 km) in its Caribbean footprint when available. Tiles load for the visible area and nearby motion context. Rain rates use mm/h. Observed radar coverage varies by location.':'Forecast coverage: eastern Caribbean, 10–23°N and 68–55°W. Rain rates use mm/h. Observed radar coverage varies by location.';
   forecastMetadataHealthy=true;forecastMeta=data;forecast=upcoming.sort((a,b)=>a.time-b.time);
   forecastState=forecastEverPublished?'updating':'preparing';
   // A ready manifest does not mean its images have arrived. The activation

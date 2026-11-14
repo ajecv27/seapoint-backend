@@ -58,12 +58,24 @@
    if(candidate.canvas){candidate.canvas.width=1;candidate.canvas.height=1;}
   }
  }
+ function contextBox(nw,se,z,latitude){
+  const world=TILE*2**z,cx=(nw.x+se.x)/2,cy=(nw.y+se.y)/2;
+  // Match storms in a geographic context rather than a tiny highly magnified
+  // screen. The fixed worker search then still covers realistic hourly travel.
+  const minimum=world*(13/Math.max(.1,Math.cos(latitude*Math.PI/180)))/360;
+  const width=Math.max(se.x-nw.x,minimum),height=Math.max(se.y-nw.y,minimum);
+  const result={nw:{x:cx-width/2,y:cy-height/2},se:{x:cx+width/2,y:cy+height/2}};
+  const top=Math.max(0,result.nw.y),bottom=Math.min(world,result.se.y);
+  if(bottom>top){result.nw.y=top;result.se.y=bottom;}
+  return result;
+ }
  function viewOf(map){
   const size=map.getSize(),z=Math.max(0,Math.min(4,Math.floor(map.getZoom())));
   const factor=2**(z-map.getZoom()),bounds=map.getPixelBounds();
-  const nw={x:bounds.min.x*factor,y:bounds.min.y*factor},se={x:bounds.max.x*factor,y:bounds.max.y*factor};
-  const scale=Math.min(1.5,1024/Math.max(size.x,size.y));
-  return {z,nw,se,width:Math.max(1,Math.round(size.x*scale)),height:Math.max(1,Math.round(size.y*scale)),bounds:map.getBounds(),key:[map.getZoom(),size.x,size.y,nw.x.toFixed(5),nw.y.toFixed(5)].join(':')};
+  const box=contextBox({x:bounds.min.x*factor,y:bounds.min.y*factor},{x:bounds.max.x*factor,y:bounds.max.y*factor},z,map.getCenter().lat);
+  const {nw,se}=box,width=se.x-nw.x,height=se.y-nw.y,scale=1024/Math.max(width,height);
+  const geographic=root.L.latLngBounds(map.unproject(root.L.point(nw.x,nw.y),z),map.unproject(root.L.point(se.x,se.y),z));
+  return {z,nw,se,width:Math.max(1,Math.round(width*scale)),height:Math.max(1,Math.round(height*scale)),bounds:geographic,key:[map.getZoom(),size.x,size.y,nw.x.toFixed(5),nw.y.toFixed(5),se.x.toFixed(5),se.y.toFixed(5)].join(':')};
  }
  async function mosaic(frame,view,current){
   const sx=view.width/(view.se.x-view.nw.x),sy=view.height/(view.se.y-view.nw.y);
@@ -130,5 +142,5 @@
   return new Layer(frame,options);
  }
  function stats(){return {tileCache:tiles.entries.size,regionalCache:regions.entries.size,canvases:canvases.size,activeRequests:tiles.active+regions.active};}
- return {createLayer,project,tilePlan,overlap,stats};
+ return {createLayer,project,tilePlan,overlap,contextBox,stats};
 });

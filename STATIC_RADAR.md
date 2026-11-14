@@ -84,7 +84,7 @@ semantics remain attached to every frame. Global model runs expire after 24
 hours in the player; their static assets remain for 25 hours from model issue.
 Regional generation retention remains 24 hours from publication.
 
-The phone downloads only the native tiles needed for its current viewport and
+The phone downloads only the native tiles needed for its current viewport, nearby motion context and
 nearby animation frames. It composes those tiles with the finer regional PNG in
 a viewport-sized canvas, clearing the global rain beneath that region first.
 This avoids drawing rain twice, and preserves genuinely dry regional pixels.
@@ -104,3 +104,9 @@ record integrity, tile reuse/rebuild, publication identity and source expiry.
 checking that the live site advertises full worldwide coverage. It also includes
 the earlier first-frame/lazy Navigation updates and release Internet permission,
 with the same backup, validation and safe-rerun behavior as the launch updater.
+
+At tight zoom levels, viewport canvases include enough surrounding geography for
+the motion worker to track realistic hourly travel. The view context is clipped
+to Web Mercator's latitude limits, so a zoomed-out world is not vertically
+compressed by off-map pixels. The translated-cell regression checks forward
+motion through all interpolation fractions at the initial close zoom.
