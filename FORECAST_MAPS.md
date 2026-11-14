@@ -226,3 +226,14 @@ a minute to wake: https://render.com/docs/free . These code changes remove
 avoidable application work; they do not remove the hosting platform's idle wake.
 The delayed-script browser benchmark uses an artificial10-second resource hold
 and is not a phone hardware or Render cold-start timing guarantee.
+
+## Global static delivery
+
+The regional API remains available for existing clients. The GitHub Pages app
+also publishes worldwide GFS tiles through `global_forecast.py` and combines
+them with those regional images using `global_rain.js`. The detail in the
+AROME Antilles footprint is preserved; outside it the actual GFS grid is about
+28 km. Its global PRATE field is total precipitation in water-equivalent mm/h,
+which can include frozen precipitation at colder locations. Only visible-area
+tiles are downloaded on the phone. Full publication, freshness and client
+memory behavior are documented in `STATIC_RADAR.md`.

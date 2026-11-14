@@ -36,6 +36,7 @@ const config={lat:coordinate('lat',17.12,85),lon:coordinate('lon',-61.8,180),nam
     html, count = re.subn(r'/rain-motion\.js\?v=\d+', 'rain-motion.js', html)
     if count != 1:
         raise ValueError('Expected one optional motion script')
+    html = replace_once(html, "'/global-rain.js?v=1'", "'global-rain.js?v=1'")
     html = replace_once(html, "fetchWeatherJson('/radar-frames',30000);if(!response.ok||!Array.isArray(data.frames))throw new Error();",
         "fetchWeatherJson('https://api.rainviewer.com/public/weather-maps.json',15000);if(!response.ok||!Array.isArray(data.radar?.past))throw new Error();")
     html = replace_once(html, 'observed=data.frames.filter(', 'observed=data.radar.past.filter(')
@@ -54,7 +55,7 @@ const config={lat:coordinate('lat',17.12,85),lon:coordinate('lon',-61.8,180),nam
     html = replace_once(html, old, new)
     html = replace_once(html, '</section>\n<footer id="player"', '<p><a href="vendor/NOTICE.txt" target="_blank" rel="noopener">Map library licences</a></p></section>\n<footer id="player"')
     # No request needed by this page may point to the sleeping application server.
-    for dependency in ["'/radar-frames'", "'/forecast-frames'", "'/basemap-style'", "'/rain-motion.js"]:
+    for dependency in ["'/radar-frames'", "'/forecast-frames'", "'/basemap-style'", "'/rain-motion.js", "'/global-rain.js"]:
         if dependency in html:
             raise ValueError('Render dependency remains: '+dependency)
     return html
@@ -83,6 +84,7 @@ def write_shell(output):
     vendor_assets(output)
     (output/'index.html').write_text(static_html())
     shutil.copy2(ROOT/'rain_motion.js', output/'rain-motion.js')
+    shutil.copy2(ROOT/'global_rain.js', output/'global-rain.js')
     (output/'.nojekyll').write_text('')
     from basemap_service import basemap_document
     try:
@@ -95,7 +97,7 @@ def write_shell(output):
         raise ValueError('No valid basemap style')
 
 
-def publish_forecast(service, report, output, now):
+def publish_forecast(service, report, output, now, global_frames=None):
     """Copy and verify all images before switching the local latest pointer."""
     from forecast_service import RegionalForecastMaps
     if report.get('status') != 'ready':
@@ -116,6 +118,24 @@ def publish_forecast(service, report, output, now):
     if (not frames or frames[0]['time']>now or frames[-1]['time']<now+54*3600 or
             any(b['time']-a['time']!=3600 for a,b in zip(frames,frames[1:]))):
         raise ValueError('A complete buffered forecast is required for publication')
+    world = {}
+    if global_frames is not None:
+        from global_forecast import BOUNDS, MAX_ZOOM, TILE_SIZE, STYLE
+        for frame in global_frames:
+            run=frame.get('model_run');stamp=frame.get('time');fetched=frame.get('fetched_at')
+            if (type(run)is not int or run%21600 or not 0<=now-run<86400 or
+                type(stamp)is not int or type(fetched)is not int or not run<=fetched<=now+60):
+                raise ValueError('Invalid global forecast source times')
+            hour,remainder=divmod(stamp-run,3600)
+            cycle=datetime.fromtimestamp(run,timezone.utc).strftime('%Y%m%d%H')
+            if (remainder or not 1<=hour<=120 or frame.get('max_zoom')!=MAX_ZOOM or
+                frame.get('tile_size')!=TILE_SIZE or frame.get('bounds')!=BOUNDS or
+                frame.get('units')!='mm/h' or
+                frame.get('url_template')!=f'data/world/{cycle}-{hour:03d}-{STYLE}/{{z}}/{{x}}/{{y}}.png'):
+                raise ValueError('Invalid global forecast tile identity')
+            world[stamp]=frame
+        if any(frame['time']not in world for frame in frames):
+            raise ValueError('Global tiles missing for advertised forecast')
     generation = datetime.fromtimestamp(now,timezone.utc).strftime('%Y%m%dT%H%M%SZ')
     final = output/'data/generations'/generation
     stage = output/'data/generations'/('.building-'+generation)
@@ -131,9 +151,12 @@ def publish_forecast(service, report, output, now):
             digest=hashlib.sha256(data).hexdigest()
             published_name=Path(name).stem+'-'+digest[:16]+'.png'
             (stage/published_name).write_bytes(data)
-            public.append(dict(frame,url=f'data/generations/{generation}/{published_name}',sha256=digest))
+            entry=dict(frame,url=f'data/generations/{generation}/{published_name}',sha256=digest)
+            if world:entry['global_tiles']={key:value for key,value in world[frame['time']].items()if key!='time'}
+            public.append(entry)
         manifest=dict(report,frames=public,static_manifest_version=1,published_at=int(now),
                       rolling_horizon_hours=48,available_until=frames[-1]['time'],updating=False)
+        if world:manifest['global_coverage']=True
         final.parent.mkdir(parents=True,exist_ok=True)
         if final.exists():
             raise ValueError('Generation already exists')
@@ -141,7 +164,8 @@ def publish_forecast(service, report, output, now):
         path=output/'data/latest.json';temp=path.with_suffix('.tmp')
         temp.write_text(json.dumps(manifest,separators=(',',':')));temp.replace(path)
         health=dict(app='SeaPoint Radar',static_manifest_version=1,status='ready',
-                    published_at=int(now),available_until=frames[-1]['time'],rolling_horizon_hours=48)
+                    published_at=int(now),available_until=frames[-1]['time'],rolling_horizon_hours=48,
+                    global_coverage=bool(world))
         (output/'health.json').write_text(json.dumps(health))
         # Old open pages keep their immutable URLs through source freshness expiry.
         for directory in final.parent.iterdir():
@@ -161,14 +185,31 @@ def build(output, cache, timeout=600):
     os.environ['SEAPOINT_AROME_CACHE']=str(cache/'arome')
     write_shell(output)
     from forecast_service import RegionalForecastMaps
-    service=RegionalForecastMaps(horizon_hours=54)
+    from forecast_maps import ForecastMaps
+    from global_forecast import CachedGFSReader, WorldTiles
+    reader=CachedGFSReader(cache/'gfs-records')
+    service=RegionalForecastMaps(gfs=ForecastMaps(reader=reader,horizon_hours=54),horizon_hours=54)
+    world=WorldTiles(output/'data/world',reader=reader)
     deadline=time.monotonic()+timeout
     while True:
         report=service.snapshot()
         # Let each provider finish its current refresh. Publishing as soon as
         # cached GFS is complete would omit a regional update still decoding.
         if report.get('coverage_complete') and not report.get('updating'):
-            return publish_forecast(service,report,output,time.time())
+            gfs=service.gfs.snapshot()
+            if gfs.get('status')=='ready'and gfs.get('coverage_complete')and not gfs.get('updating'):
+                global_frames=world.prepare(gfs,time.time())
+                # A build can cross an hourly/model boundary. Prepare its new
+                # endpoint before publishing instead of shortening the buffer.
+                report=service.snapshot()
+                latest_gfs=service.gfs.snapshot()
+                available={frame['time']for frame in global_frames}
+                if (report.get('coverage_complete')and not report.get('updating')and
+                    not latest_gfs.get('updating')and latest_gfs.get('model_run')==gfs.get('model_run')and
+                    all(frame['time']in available for frame in report.get('frames',[]))):
+                    manifest=publish_forecast(service,report,output,time.time(),global_frames)
+                    world.prune(time.time());reader.prune(time.time())
+                    return manifest
         if time.monotonic()>=deadline:
             # Fail the deployment; the last successful public site stays intact.
             raise TimeoutError('Buffered forecast could not be prepared; previous deployment retained')

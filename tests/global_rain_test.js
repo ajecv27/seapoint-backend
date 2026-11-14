@@ -1,0 +1,17 @@
+'use strict';
+const assert=require('node:assert/strict');
+const {project,tilePlan,overlap}=require('../global_rain.js');
+assert.deepEqual(project(0,0,0),{x:128,y:128});
+assert(Math.abs(project(85.0511287798066,-180,0).y)<1e-9);
+assert(Math.abs(project(-85.0511287798066,180,0).y-256)<1e-9);
+assert.equal(project(90,0,0).y,project(85.0511287798066,0,0).y);
+const edge=tilePlan({x:250,y:0},{x:270,y:256},0);
+assert.deepEqual(edge.map(t=>t.wrappedX),[0,0]);
+const west=tilePlan({x:-10,y:20},{x:10,y:40},2);
+assert.deepEqual(west.map(t=>t.wrappedX),[3,0]);
+assert.equal(tilePlan({x:0,y:-200},{x:256,y:100},0).length,1);
+assert.equal(tilePlan({x:0,y:300},{x:256,y:400},0).length,0);
+assert.throws(()=>tilePlan({x:0,y:0},{x:100000,y:100000},4));
+assert.deepEqual(overlap({left:0,right:5,top:0,bottom:5},{left:2,right:6,top:1,bottom:3}),{left:2,right:5,top:1,bottom:3});
+assert.equal(overlap({left:0,right:1,top:0,bottom:1},{left:2,right:3,top:0,bottom:1}),null);
+console.log('PASS global projection, longitude wrap, polar clipping, bounded viewport and regional replacement geometry');

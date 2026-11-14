@@ -11,6 +11,8 @@ on:
       - 'static_site/**'
       - 'radar_view.py'
       - 'rain_motion.js'
+      - 'global_rain.js'
+      - 'global_forecast.py'
       - 'basemap_service.py'
       - 'forecast_maps.py'
       - 'forecast_service.py'
@@ -29,7 +31,7 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -50,9 +52,12 @@ jobs:
       - name: Install forecast decoders
         run: python -m pip install -r requirements.txt
       - name: Validate publication and provider selection
-        run: python -m unittest discover -s tests -p 'test_static_site.py'
+        run: |
+          python -m unittest discover -s tests -p 'test_static_site.py'
+          python -m unittest discover -s tests -p 'test_global_forecast.py'
+          node tests/global_rain_test.js
       - name: Prepare a complete buffered forecast
-        run: python static_site/export.py --output _site --cache .radar-cache --timeout 720
+        run: python static_site/export.py --output _site --cache .radar-cache --timeout 960
       - name: Retain verified downloads for the next build
         uses: actions/cache/save@v4
         with:
