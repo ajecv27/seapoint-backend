@@ -17,7 +17,6 @@ from zoneinfo import ZoneInfo
 from pypdf import PdfReader
 from forecast_runtime import ForecastRuntime
 from official_alerts import OfficialAlertService, parse_marine_locations, parse_marine_cancellations
-from radar_view import radar_page
 from basemap_service import basemap_document
 
 FORECAST_MAPS = ForecastRuntime()
@@ -1498,7 +1497,30 @@ class Handler(
             content
         )
 
+    def redirect_radar(self, query_string):
+        # Older Android builds still open this Render URL. Send them to the
+        # same worldwide forecast used by updated builds, preserving location.
+        # Re-encode values before using them in a header; the destination host
+        # is fixed and cannot be supplied by the request.
+        parameters = parse_qs(query_string, keep_blank_values=True)
+        parameters["ui"] = ["world-20261114"]
+        destination = (
+            "https://ajecv27.github.io/seapoint-backend/?"
+            + urlencode(parameters, doseq=True)
+        )
+        self.send_response(302)
+        self.send_cors_headers()
+        self.send_header("Location", destination)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def do_HEAD(self):
+        parsed = urlparse(self.path)
+        if parsed.path == "/radar":
+            self.redirect_radar(parsed.query)
+            return
+
         self.send_response(
             200
         )
@@ -1670,50 +1692,7 @@ class Handler(
             return
 
         if path == "/radar":
-            try:
-                latitude = float(
-                    query.get(
-                        "lat",
-                        ["17.12"],
-                    )[0]
-                )
-
-                longitude = float(
-                    query.get(
-                        "lon",
-                        ["-61.85"],
-                    )[0]
-                )
-
-                location_name = (
-                    query.get(
-                        "name",
-                        ["Antigua"],
-                    )[0]
-                )
-
-                content = radar_page(
-                    latitude,
-                    longitude,
-                    location_name,
-                ).encode(
-                    "utf-8"
-                )
-
-                self.send_content(
-                    content,
-                    "text/html; charset=utf-8",
-                )
-
-            except Exception as error:
-                self.send_json(
-                    {
-                        "error":
-                            str(error),
-                    },
-                    500,
-                )
-
+            self.redirect_radar(parsed.query)
             return
 
         if path.startswith(
