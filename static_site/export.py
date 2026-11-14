@@ -36,7 +36,7 @@ const config={lat:coordinate('lat',17.12,85),lon:coordinate('lon',-61.8,180),nam
     html, count = re.subn(r'/rain-motion\.js\?v=\d+', 'rain-motion.js', html)
     if count != 1:
         raise ValueError('Expected one optional motion script')
-    html = replace_once(html, "'/global-rain.js?v=1'", "'global-rain.js?v=1'")
+    html = replace_once(html, "'/global-rain.js?v=2'", "'global-rain.js?v=2'")
     html = replace_once(html, "fetchWeatherJson('/radar-frames',30000);if(!response.ok||!Array.isArray(data.frames))throw new Error();",
         "fetchWeatherJson('https://api.rainviewer.com/public/weather-maps.json',15000);if(!response.ok||!Array.isArray(data.radar?.past))throw new Error();")
     html = replace_once(html, 'observed=data.frames.filter(', 'observed=data.radar.past.filter(')

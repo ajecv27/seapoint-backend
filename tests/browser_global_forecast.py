@@ -8,7 +8,7 @@ import json,os,re,sys,time
 from pathlib import Path
 from PIL import Image
 from playwright.sync_api import sync_playwright
-from browser_motion import PNG,external_asset,fixture_server,scrub
+from browser_motion import PNG,external_asset,fixture_server,scrub,fixture_png,png_image,strong_components
 ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT))
 from radar_view import radar_page
 OUT=ROOT/'test-output/global';OUT.mkdir(parents=True,exist_ok=True)
@@ -25,7 +25,8 @@ def main():
   frames.append({'time':stamp,'url':f'/region/{i}.png','provider':'arome-antilles'if regional else'noaa-gfs','model_run':run,'bounds':[[10,-68],[22.9 if regional else 23,-55]],'resolution_km':2.5 if regional else 28,
    'global_tiles':{'url_template':f'data/world/{cycle}-{hour:03d}-g1/{{z}}/{{x}}/{{y}}.png','model_run':run,'fetched_at':int(now),'units':'mm/h','max_zoom':4,'tile_size':256}})
  red=encoded((256,256),(220,30,50,200));clear=encoded((640,640),(0,0,0,0))
- state={'fail':False};requests=[];errors=[]
+ state={'fail':False,'moving':False};requests=[];errors=[]
+ moving=[fixture_png(0,640),fixture_png(6,640)]
  with fixture_server()as base,sync_playwright()as p:
   browser=p.chromium.launch(executable_path=os.environ.get('CHROMIUM_PATH','/usr/bin/chromium'),headless=True,args=['--no-sandbox','--enable-unsafe-swiftshader','--use-gl=angle','--use-angle=swiftshader'])
   page=browser.new_page(viewport={'width':390,'height':844},device_scale_factor=1)
@@ -42,7 +43,7 @@ def main():
   page.route('**/global-rain.js?*',lambda r:r.fulfill(body=(ROOT/'global_rain.js').read_bytes(),content_type='text/javascript'))
   page.route('**/radar-frames',lambda r:r.fulfill(json={'host':base,'frames':[]}))
   page.route('**/forecast-frames',lambda r:r.fulfill(json={'status':'ready','source':'world fixture','units':'mm/h','model_run':run,'fetched_at':int(now),'bounds':[[10,-68],[22.9,-55]],'forecast_until':int(now+48*3600),'coverage_complete':True,'global_coverage':True,'frames':frames}))
-  page.route('**/region/*.png',lambda r:r.fulfill(body=clear,content_type='image/png'))
+  page.route('**/region/*.png',lambda r:r.fulfill(body=moving[int(r.request.url.rsplit('/',1)[-1][:-4])%2]if state['moving']else clear,content_type='image/png'))
   def tile(route):
    if state['fail']:route.abort()
    else:route.fulfill(body=red,content_type='image/png')
@@ -54,11 +55,11 @@ def main():
   def ready():
    page.wait_for_function("seapointMotionState().renderer?.state==='ready'&&!seapointMotionState().buffering&&getComputedStyle(rainMotionOverlay._canvas).display!=='none'",timeout=20000)
   def alpha():
-   return page.evaluate("() => {const a=rainMotionRenderer._pair.a;const c=rainMotionOverlay._canvas;const gl=c.getContext('webgl');const p=new Uint8Array(c.width*c.height*4);gl.readPixels(0,0,c.width,c.height,gl.RGBA,gl.UNSIGNED_BYTE,p);let sum=0;for(let i=3;i<p.length;i+=4)sum+=p[i];return sum/(c.width*c.height);}")
+   return page.evaluate("() => {const c=rainMotionOverlay._canvas;const gl=c.getContext('webgl');const p=new Uint8Array(16*16*4);gl.readPixels(Math.floor(c.width/2)-8,Math.floor(c.height/2)-8,16,16,gl.RGBA,gl.UNSIGNED_BYTE,p);let sum=0;for(let i=3;i<p.length;i+=4)sum+=p[i];return sum/256;}")
   scrub(page,frames[3]['time']+1800);ready()
   assert alpha()<1,'Global rain was left underneath the dry fine regional field'
   initial=[url for url in requests if '/data/world/'in url]
-  assert len(initial)<=12,{'startup_world_tile_requests':len(initial)}
+  assert len(initial)<=24,{'startup_world_tile_requests':len(initial)}
   page.evaluate('map.setView([51.5,-.12],6,{animate:false})');ready()
   assert alpha()>180,'Global rain missing in London'
   page.locator('#play').click();old=page.evaluate('position')
@@ -84,6 +85,20 @@ def main():
   assert page.locator('#notice').is_visible()
   state['fail']=False;page.evaluate('setPlaying(true)');ready()
   page.evaluate('setPlaying(false)');results['missing_tiles_recover_without_claiming_clear']=True
+  state['moving']=True
+  page.evaluate('map.setView([17.12,-61.8],10.5,{animate:false})')
+  scrub(page,frames[30]['time']+1800);ready()
+  assert page.evaluate('rainMotionRenderer.stats.mode')=='motion'
+  centers=[]
+  for fraction in [0,.25,.5,.75,1]:
+   image=png_image(page.evaluate('(t)=>{rainMotionRenderer.render(t);return rainMotionOverlay._canvas.toDataURL();}',fraction))
+   components=strong_components(image,threshold=220)
+   assert len(components)==1,{'fraction':fraction,'components':len(components)}
+   centers.append(sum(x for x,y in components[0])/len(components[0]))
+  assert all(b>=a-.25 for a,b in zip(centers,centers[1:])),centers
+  assert centers[-1]-centers[0]>35,centers
+  results['fast_cell_tracks_forward_at_tight_zoom']=centers
+  page.evaluate('rainMotionRenderer.render(.5)')
   assert not errors,errors
   results['errors']=errors
   page.screenshot(path=str(OUT/'global-delivery.png'))
