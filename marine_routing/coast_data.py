@@ -71,7 +71,7 @@ def load_coast(directory=None):
     return geometries, osm, manifest
 
 
-def select_routing_coast(gshhg, osm):
+def select_routing_coast(gshhg, osm, manifest=None):
     """Use current detailed OSM coastlines for matched landmasses.
 
     Unioning both releases fills dredged harbours and shifts shorelines back
@@ -82,6 +82,23 @@ def select_routing_coast(gshhg, osm):
     from shapely.strtree import STRtree
     if not osm:
         raise ValueError('Detailed coastline data is missing')
+    if manifest is not None:
+        # The source matching is a build step, not recurring cold-start work.
+        # Validate this tiny index against the immutable, already verified data.
+        from . import COASTLINE_POLICY
+        raw = Path(__file__).with_name('coast_policy.json').read_bytes()
+        if hashlib.sha256(raw).hexdigest() != 'b8a09a0c60fdda3db51f9af88c6b1c36ed753f4632284eb29a5a3ca4fe5e01c9':
+            raise ValueError('Coastline policy index checksum differs')
+        policy = json.loads(raw)
+        indices = policy['fallback_indices']
+        if (policy['policy'] != COASTLINE_POLICY or policy['dataset'] != manifest['id'] or
+                policy['coast_sha256'] != manifest['sha256'] or
+                policy['gshhg_features'] != len(gshhg) or policy['osm_features'] != len(osm) or
+                not isinstance(indices, list) or
+                any(type(i) is not int or not 0 <= i < len(gshhg) for i in indices) or
+                indices != sorted(set(indices))):
+            raise ValueError('Coastline policy index does not match this dataset')
+        return list(osm) + [gshhg[i] for i in indices]
     detailed = STRtree(osm)
     # Do not prepare every polygon here: preparing the full continental coast
     # creates large spatial indexes. Runtime prepares only encountered features.

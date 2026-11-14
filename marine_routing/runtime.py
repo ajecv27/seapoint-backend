@@ -18,7 +18,7 @@ DATASET = 'caribbean-osm-gshhg-20261114-v1'
 
 
 class RoutingRuntime:
-    def __init__(self, *, command=None, clock=None, startup_timeout=45,
+    def __init__(self, *, command=None, clock=None, startup_timeout=75,
                  route_timeout=22, memory_mb=320, cache_seconds=900):
         self.command = command or [sys.executable, '-m', 'marine_routing.worker']
         self.clock = clock or time.monotonic
@@ -36,6 +36,7 @@ class RoutingRuntime:
         self._retry_at = 0
         self._cache = OrderedDict()
         self._build = None
+        self._initialization_error = None
 
     def start(self):
         with self._lock:
@@ -72,7 +73,7 @@ class RoutingRuntime:
             env = dict(os.environ, OPENBLAS_NUM_THREADS='1', OMP_NUM_THREADS='1',
                        SEAPOINT_ROUTE_TIMING='0', PYTHONUNBUFFERED='1')
             process = subprocess.Popen(self.command, cwd=Path(__file__).resolve().parents[1],
-                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=sys.stderr,
                 text=True, encoding='utf-8', bufsize=1, env=env)
             messages = queue.Queue(maxsize=4)
             with self._lock:
@@ -93,9 +94,13 @@ class RoutingRuntime:
                 if self._closed or self._process is not process:
                     return
                 self._build = message['build']
+                self._initialization_error = None
                 self._ready = True
                 self._starting = False
-        except Exception:
+        except Exception as error:
+            with self._lock:
+                self._initialization_error = 'timeout' if isinstance(error, queue.Empty) else 'worker_error'
+            print('SeaPoint routing startup failed: ' + type(error).__name__, file=sys.stderr, flush=True)
             self._retire(process, backoff=15)
 
     def _retire(self, process, *, backoff=0):
@@ -129,6 +134,7 @@ class RoutingRuntime:
             return {'status': status, 'service': 'seapoint-marine-routing',
                     'routing_build': self._build, 'coastline_dataset': DATASET,
                     'coastline_policy': COASTLINE_POLICY,
+                    'initialization_error': self._initialization_error,
                     'coverage': list(BOUNDS), 'region': 'caribbean', 'depth_checked': False}
 
     @staticmethod
