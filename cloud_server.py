@@ -19,6 +19,7 @@ from forecast_runtime import ForecastRuntime
 from marine_routing.runtime import RoutingRuntime
 from official_alerts import OfficialAlertService, parse_marine_locations, parse_marine_cancellations
 from basemap_service import basemap_document
+from tide_service import TideService, TideUnavailable
 
 FORECAST_MAPS = ForecastRuntime()
 MARINE_ROUTES = RoutingRuntime()
@@ -62,9 +63,6 @@ WEEKDAYS = {
     "sunday": 6,
 }
 
-TIDE_CACHE = {}
-TIDE_CACHE_LOCK = Lock()
-TIDE_CACHE_TTL_SECONDS = 3600
 
 
 def fetch(url, timeout=20):
@@ -594,137 +592,26 @@ def get_rainviewer_frames():
     }
 
 
-def get_tides(
-    latitude,
-    longitude,
-):
-    if not WORLDTIDES_API_KEY:
-        raise RuntimeError(
-            "WorldTides API key is not configured"
-        )
-
-    if not -90 <= latitude <= 90:
-        raise ValueError(
-            "Latitude must be between -90 and 90"
-        )
-
-    if not -180 <= longitude <= 180:
-        raise ValueError(
-            "Longitude must be between -180 and 180"
-        )
-
-    cache_key = (
-        round(latitude, 4),
-        round(longitude, 4),
-    )
-
-    now = unix_time()
-
-    with TIDE_CACHE_LOCK:
-        cached = TIDE_CACHE.get(
-            cache_key
-        )
-
-        if (
-            cached
-            and now - cached["saved_at"]
-            < TIDE_CACHE_TTL_SECONDS
-        ):
-            return cached["payload"]
-
+def _fetch_tide_prediction(latitude, longitude, date):
     params = urlencode({
-        "date": "today",
-        "days": 7,
-        "lat": f"{latitude:.6f}",
-        "lon": f"{longitude:.6f}",
-        "datum": "CD",
-        "key": WORLDTIDES_API_KEY,
+        'date': date, 'days': 7, 'lat': f'{latitude:.4f}',
+        'lon': f'{longitude:.4f}', 'datum': 'CD', 'key': WORLDTIDES_API_KEY,
     })
+    return json.loads(fetch(f'{WORLDTIDES_API}?extremes&localtime&{params}', timeout=20))
 
-    url = (
-        f"{WORLDTIDES_API}"
-        f"?extremes&localtime&{params}"
-    )
 
-    data = json.loads(
-        fetch(
-            url,
-            timeout=20,
-        ).decode(
-            "utf-8"
-        )
-    )
+TIDE_SERVICE = TideService(
+    _fetch_tide_prediction,
+    directory=os.environ.get('SEAPOINT_TIDE_CACHE_DIR', '.tide-cache'),
+    provider_key=WORLDTIDES_API_KEY,
+    daily_limit=int(os.environ.get('SEAPOINT_TIDE_DAILY_LIMIT', '50')),
+)
 
-    status = data.get(
-        "status",
-        200,
-    )
 
-    if status != 200:
-        raise RuntimeError(
-            data.get(
-                "error",
-                "WorldTides request failed",
-            )
-        )
-
-    extremes = data.get(
-        "extremes"
-    ) or []
-
-    extremes = sorted(
-        extremes,
-        key=lambda event: event.get(
-            "dt",
-            0,
-        ),
-    )
-
-    payload = {
-        "ok": True,
-        "requestLat": data.get(
-            "requestLat",
-            latitude,
-        ),
-        "requestLon": data.get(
-            "requestLon",
-            longitude,
-        ),
-        "responseLat": data.get(
-            "responseLat"
-        ),
-        "responseLon": data.get(
-            "responseLon"
-        ),
-        "timezone": data.get(
-            "timezone"
-        ),
-        "datum": data.get(
-            "responseDatum"
-        ),
-        "station": data.get(
-            "station"
-        ),
-        "atlas": data.get(
-            "atlas"
-        ),
-        "callCount": data.get(
-            "callCount"
-        ),
-        "copyright": data.get(
-            "copyright",
-            "",
-        ),
-        "extremes": extremes,
-    }
-
-    with TIDE_CACHE_LOCK:
-        TIDE_CACHE[cache_key] = {
-            "saved_at": now,
-            "payload": payload,
-        }
-
-    return payload
+def get_tides(latitude, longitude, client_id='', retry_paused=False):
+    if not WORLDTIDES_API_KEY:
+        raise TideUnavailable('not_configured', int(unix_time()+21600))
+    return TIDE_SERVICE.get(client_id, latitude, longitude, retry_paused=retry_paused)
 
 
 def _legacy_radar_page(
@@ -1409,7 +1296,7 @@ class Handler(
 ):
 
     def log_message(self, format, *args):
-        if urlparse(self.path).path == '/route':
+        if urlparse(self.path).path in ('/route', '/tides'):
             return
         super().log_message(format, *args)
 
@@ -1428,7 +1315,7 @@ class Handler(
 
         self.send_header(
             "Access-Control-Allow-Headers",
-            "Content-Type",
+            "Content-Type, X-SeaPoint-Tide-Client, X-SeaPoint-Tide-Probe",
         )
 
     def send_json(
@@ -1649,53 +1536,25 @@ class Handler(
                 }, 503)
             return
 
-        if path == "/tides":
+        if path == '/tides/status':
+            status = TIDE_SERVICE.status()
+            self.send_json(dict(status, configured=bool(WORLDTIDES_API_KEY)))
+            return
+
+        if path == '/tides':
             try:
-                latitude = float(
-                    query.get(
-                        "lat",
-                        [""],
-                    )[0]
-                )
-
-                longitude = float(
-                    query.get(
-                        "lon",
-                        [""],
-                    )[0]
-                )
-
-                self.send_json(
-                    get_tides(
-                        latitude,
-                        longitude,
-                    )
-                )
-
-            except ValueError as error:
-                self.send_json(
-                    {
-                        "ok": False,
-                        "error":
-                            str(error),
-                    },
-                    400,
-                )
-
+                latitude = float(query.get('lat',[''])[0])
+                longitude = float(query.get('lon',[''])[0])
+                self.send_json(get_tides(latitude, longitude,
+                               self.headers.get('X-SeaPoint-Tide-Client',''),
+                               self.headers.get('X-SeaPoint-Tide-Probe') == '1'))
+            except TideUnavailable as error:
+                self.send_json(error.payload(), error.status)
+            except ValueError:
+                self.send_json({'ok':False,'error':'Invalid tide coordinates'},400)
             except Exception as error:
-                print(
-                    f"Tides error: {error}"
-                )
-
-                self.send_json(
-                    {
-                        "ok": False,
-                        "error":
-                            "Tide data unavailable",
-                    },
-                    502,
-                )
-
+                print('Tide service failed: '+type(error).__name__, flush=True)
+                self.send_json({'ok':False,'error':'Tide updates temporarily unavailable'},503)
             return
 
         if path == "/radar-frames":

@@ -5,6 +5,9 @@ on:
     paths:
       - 'marine_routing/**'
       - 'cloud_server.py'
+      - 'tide_service.py'
+      - 'android-client/tide-cache**'
+      - 'android-client/tide-cache/**'
       - 'requirements*.txt'
       - 'tests/test*py'
       - 'tests/routing_fixture_worker.py'
@@ -16,6 +19,9 @@ on:
     paths:
       - 'marine_routing/**'
       - 'cloud_server.py'
+      - 'tide_service.py'
+      - 'android-client/tide-cache**'
+      - 'android-client/tide-cache/**'
       - 'requirements*.txt'
       - 'android-client/online-routing**'
       - 'android-client/online-routing/**'
@@ -49,7 +55,11 @@ jobs:
       - uses: actions/checkout@v4
       - name: Windows PowerShell 5.1 installation
         shell: powershell
-        run: ./android-client/online-routing/installer-smoke.ps1
+        run: |
+          ./android-client/online-routing/installer-smoke.ps1
+          ./android-client/tide-cache/installer-smoke.ps1
       - name: PowerShell 7 installation
         shell: pwsh
-        run: ./android-client/online-routing/installer-smoke.ps1
+        run: |
+          ./android-client/online-routing/installer-smoke.ps1
+          ./android-client/tide-cache/installer-smoke.ps1
