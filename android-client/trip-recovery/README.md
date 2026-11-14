@@ -67,6 +67,10 @@ not required for these current features. Account subscriptions were not changed.
   edits/dependencies, conflicting files, verified payloads and write rollback.
 - Routing-check process tests preserve Docker formatting arguments and handle
   an unavailable Docker daemon without failing the trip update.
+- Installer parsing is checked with native PowerShell 7 and PowerShell 5.1-style
+  non-enumerated JSON output. Both produce nine separate definitions with scalar
+  paths. The full install/backup/rerun/rollback fixtures run under both output
+  modes. The parsing-only regression script can also run on Windows PowerShell.
 
 Live GPS, actual Android process-kill recovery and screen-lock behavior still
 need checking on the phone. Keep Navigation open while recording during these

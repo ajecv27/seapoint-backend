@@ -1,0 +1,40 @@
+name: Check trip installer
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/check-trip-installer.yml'
+      - 'android-client/trip-recovery-update.ps1'
+      - 'android-client/trip-recovery/tests/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/check-trip-installer.yml'
+      - 'android-client/trip-recovery-update.ps1'
+      - 'android-client/trip-recovery/tests/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  parse:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    strategy:
+      matrix:
+        shell: [powershell, pwsh]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check native PowerShell syntax and file-list parsing
+        shell: ${{ matrix.shell }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Write-Host ('PowerShell version: ' + $PSVersionTable.PSVersion)
+          $tokens = $null
+          $errors = $null
+          $path = Join-Path $PWD 'android-client/trip-recovery-update.ps1'
+          $null = [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors)
+          if ($errors.Count -gt 0) { throw ($errors | Out-String) }
+          & ./android-client/trip-recovery/tests/json-array-compatibility.ps1
+          & ./android-client/trip-recovery/tests/installer-smoke.ps1
