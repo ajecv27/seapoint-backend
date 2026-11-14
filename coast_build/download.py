@@ -3,7 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 import urllib.request,hashlib,json,time,subprocess
 import os
 root=Path(os.environ.get("SEAPOINT_COAST_WORK", Path(__file__).resolve().parent/"cache"));root.mkdir(parents=True,exist_ok=True)
-sources=[('osm-land.zip','https://osmdata.openstreetmap.de/download/land-polygons-split-3857.zip',954027097,'a461f7ea79eecad1caf7042aecc09d290ffc7274ecd7032e03dbf934dd3b4968'),('gshhg.zip','https://www.soest.hawaii.edu/pwessel/gshhg/gshhg-shp-2.3.7.zip',149157845,'8dbbe7e071e77e9e75f2d639239099ebca8d5c16d6a07df8169729d49f15cf41')]
+sources=[('osm-land.zip','https://osmdata.openstreetmap.de/download/land-polygons-split-3857.zip',954027097,'a461f7ea79eecad1caf7042aecc09d290ffc7274ecd7032e03dbf934dd3b4968'),('gshhg.zip','http://www.soest.hawaii.edu/pwessel/gshhg/gshhg-shp-2.3.7.zip',149157845,'8dbbe7e071e77e9e75f2d639239099ebca8d5c16d6a07df8169729d49f15cf41')]
 def get(item):
  name,url,size,expected=item;target=root/name
  if target.exists() and target.stat().st_size==size and hashlib.sha256(target.read_bytes()).hexdigest()==expected:return name
