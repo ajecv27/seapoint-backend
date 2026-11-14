@@ -11,6 +11,8 @@ import threading
 import time
 import uuid
 
+from . import COASTLINE_POLICY
+
 BOUNDS = (-94.0, 5.0, -55.0, 34.0)
 DATASET = 'caribbean-osm-gshhg-20261114-v1'
 
@@ -84,6 +86,7 @@ class RoutingRuntime:
                              name='seapoint-routing-protocol', daemon=True).start()
             message = messages.get(timeout=self.startup_timeout)
             if (message.get('type') != 'ready' or message.get('dataset') != DATASET or
+                    message.get('coastline_policy') != COASTLINE_POLICY or
                     not isinstance(message.get('build'), str) or process.poll() is not None):
                 raise RuntimeError('Routing data unavailable')
             with self._lock:
@@ -125,6 +128,7 @@ class RoutingRuntime:
             status = 'ready' if ready else 'loading' if self._starting else 'unavailable'
             return {'status': status, 'service': 'seapoint-marine-routing',
                     'routing_build': self._build, 'coastline_dataset': DATASET,
+                    'coastline_policy': COASTLINE_POLICY,
                     'coverage': list(BOUNDS), 'region': 'caribbean', 'depth_checked': False}
 
     @staticmethod
@@ -195,7 +199,8 @@ class RoutingRuntime:
                 if status not in (200, 400, 503, 504) or not isinstance(body, dict):
                     break
                 if status == 200:
-                    if body.get('status') != 'ok' or body.get('coastline_dataset') != DATASET:
+                    if (body.get('status') != 'ok' or body.get('coastline_dataset') != DATASET or
+                            body.get('coastline_policy') != COASTLINE_POLICY):
                         break
                     with self._lock:
                         self._cache[key] = (self.clock() + self.cache_seconds, body)

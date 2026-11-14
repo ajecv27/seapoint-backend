@@ -19,7 +19,8 @@ ROUTING_BUILD = "seapoint-hosted-caribbean-v1"
 
 _ROUTE_METRICS = threading.local()
 
-from .coast_data import load_coast
+from .coast_data import load_coast, select_routing_coast
+from . import COASTLINE_POLICY
 
 COVERAGE = (-94.0, 5.0, -55.0, 34.0)
 
@@ -58,7 +59,10 @@ def check_deadline():
 def initialize():
     global LAND, OSM_LAND, DATASET
     geometries, osm, manifest = load_coast()
-    LAND = STRtree(geometries)
+    # OSM resolves marina inlets missing from the older GSHHG outline.
+    count = manifest['sources'][0]['features']
+    LAND = STRtree(select_routing_coast(geometries[:count], osm))
+    _prepared_coastline.cache_clear()
     OSM_LAND = STRtree(osm)
     DATASET = manifest
     return manifest
@@ -154,7 +158,9 @@ def endpoint_on_water(point, label):
                 / 111132,
             )
 
-            if not on_land(candidate):
+            # Merely lying outside land is insufficient: the original search
+            # may select a point whose mandatory shoreline buffer crosses land.
+            if clear_segment(candidate, candidate):
                 candidates.append(candidate)
 
         if candidates:
@@ -344,7 +350,9 @@ def astar_route(
                 gy - radius,
                 gy + radius + 2,
             )
-            if valid((i, j))
+            # A portal inside the offshore buffer has no usable coarse edges.
+            if valid((i, j)) and clear_segment(
+                coordinates((i, j)), coordinates((i, j)), clearance)
         )
 
         return sorted(
@@ -399,19 +407,21 @@ def astar_route(
 
                 fine = None
 
-                for resolution in (
-                    0.00035,
-                    0.0002,
+                # Allow the local connector to turn around harbour walls and
+                # reach the entrance beyond the direct endpoint bounding box.
+                for local_margin, resolution in (
+                    (0.005, 0.00035),
+                    (0.015, 0.00035),
+                    (0.015, 0.0002),
                 ):
                     fine = astar_route(
                         point,
                         target,
                         resolution,
-                        0.005,
+                        local_margin,
                         clearance=0.0,
                         max_cells=110000,
                     )
-
                     if fine:
                         break
 
@@ -789,7 +799,8 @@ def response_for(start, finish):
         },
         "mode": "land-avoidance-prototype",
         "region": "caribbean",
-        "coastline": "GSHHG full resolution plus Caribbean OpenStreetMap",
+        "coastline": "OpenStreetMap detailed coast with unmatched GSHHG islands",
+        "coastline_policy": COASTLINE_POLICY,
         "depth_checked": False,
         "coastline_dataset": DATASET["id"],
         "distance_nm": round(

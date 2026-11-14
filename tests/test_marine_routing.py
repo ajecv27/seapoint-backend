@@ -15,7 +15,7 @@ from shapely.geometry import box, LineString, Point
 from shapely.strtree import STRtree
 
 from marine_routing import engine
-from marine_routing.coast_data import load_coast
+from marine_routing.coast_data import load_coast, select_routing_coast
 from marine_routing.runtime import RoutingRuntime, DATASET
 
 
@@ -61,6 +61,25 @@ class CoastDataTests(unittest.TestCase):
             (folder/'manifest.json').write_text(json.dumps(manifest));(folder/'caribbean-v1.bin.gz').write_bytes(compressed)
             with patch('marine_routing.coast_data.MAX_EXPANDED_BYTES',1024):
                 with self.assertRaises(ValueError):load_coast(folder)
+
+
+class CoastPolicyTests(unittest.TestCase):
+    def test_detailed_inlet_remains_water_and_unmatched_island_remains_land(self):
+        old_mainland = box(-62, 17, -61.9, 17.1)
+        inlet = box(-61.97, 17.05, -61.94, 17.11)
+        detailed_mainland = old_mainland.difference(inlet)
+        omitted_island = box(-62.1, 17.03, -62.09, 17.04)
+        coast = STRtree(select_routing_coast([old_mainland, omitted_island], [detailed_mainland]))
+        for point, expected in [((-61.955, 17.08), False),
+                                ((-61.99, 17.04), True),
+                                ((-62.095, 17.035), True)]:
+            geometry = Point(point)
+            blocked = any(coast.geometries[int(i)].covers(geometry) for i in coast.query(geometry))
+            self.assertEqual(blocked, expected)
+
+    def test_missing_detailed_coast_is_an_error(self):
+        with self.assertRaises(ValueError):
+            select_routing_coast([box(-62,17,-61.9,17.1)], [])
 
 
 class PlannerTests(unittest.TestCase):
