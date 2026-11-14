@@ -32,8 +32,18 @@ record counts and geometry validity before enabling routing.
 
 The package contains full-resolution GSHHG 2.3.7 level-1 land and OpenStreetMap
 land polygons dated 13 November 2026, clipped to Caribbean coverage without
-geometry simplification. Searches use both datasets; final emitted segments
-are checked again against the combined coast and independently against OSM.
+geometry simplification. Current detailed OSM outlines take precedence for
+landmasses present in both datasets; unmatched GSHHG islands remain obstacles.
+Unioning the old and new outline had incorrectly filled marina inlets, including
+Jolly Harbour. This source policy applies throughout coverage, with no manually
+carved harbour corridors. Every emitted segment is checked against the selected
+coast and independently against the OSM land layer. Health and route responses
+identify this policy as `osm-primary-gshhg-unmatched-v1`.
+
+Coarse-grid connections must meet the existing offshore clearance. Near-shore
+connectors expand their local search to find harbour entrances beyond the direct
+endpoint box; endpoint adjustments must also meet the mandatory shoreline buffer.
+The 75-metre maximum adjustment, search budgets and final land checks remain.
 
 OpenStreetMap data: © OpenStreetMap contributors, ODbL 1.0,
 https://www.openstreetmap.org/copyright . GSHHG: Wessel and Smith, LGPL,

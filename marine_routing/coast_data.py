@@ -69,3 +69,22 @@ def load_coast(directory=None):
     if offset != len(data) or counts != expected or min(counts) < 100:
         raise ValueError('Incomplete coastline coverage')
     return geometries, osm, manifest
+
+
+def select_routing_coast(gshhg, osm):
+    """Use current detailed OSM coastlines for matched landmasses.
+
+    Unioning both releases fills dredged harbours and shifts shorelines back
+    to the older GSHHG outline. Retain GSHHG features with no intersecting OSM
+    landmass so isolated islands absent from OSM still obstruct a route. This
+    is one regional source policy, not a hand-drawn harbour exception.
+    """
+    from shapely.strtree import STRtree
+    if not osm:
+        raise ValueError('Detailed coastline data is missing')
+    detailed = STRtree(osm)
+    # Do not prepare every polygon here: preparing the full continental coast
+    # creates large spatial indexes. Runtime prepares only encountered features.
+    fallback = [g for g in gshhg if not any(
+        g.intersects(detailed.geometries[int(i)]) for i in detailed.query(g))]
+    return list(osm) + fallback

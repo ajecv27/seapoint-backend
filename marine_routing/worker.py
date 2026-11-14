@@ -15,7 +15,7 @@ def main():
         from . import engine
         manifest = engine.initialize()
         send({'type': 'ready', 'dataset': manifest['id'],
-              'build': engine.ROUTING_BUILD,
+              'build': engine.ROUTING_BUILD, 'coastline_policy': engine.COASTLINE_POLICY,
               'rss_kib': resource.getrusage(resource.RUSAGE_SELF).ru_maxrss})
     except Exception as error:
         print('Routing initialization failed: ' + type(error).__name__, file=sys.stderr, flush=True)
