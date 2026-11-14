@@ -67,3 +67,40 @@ site at a repository subpath, uses real generated model PNGs, blocks Render,
 isolates external tile/observed feeds, verifies the buffered 48-hour timeline,
 checks pan/zoom during playback, and rejects stale publications. It does not
 measure weather accuracy or mobile network latency.
+
+## Worldwide forecast coverage
+
+The published player now combines a global NOAA GFS tile field with the existing
+regional forecast PNGs. Global Web Mercator coverage spans 85.05°S–85.05°N and
+all longitudes. The static builder prepares hourly global XYZ tiles at zooms
+0–4 for the same 54-hour buffer; the app shows a rolling 48 hours. The original
+0.25-degree GFS grid is sampled for display, without adding forecast resolution.
+The same validated GRIB record is reused by regional and global renders.
+
+Global tiles use immutable model-run/hour/style paths. Each frame's completion
+record pins every tile checksum, and all PNGs are decoded before reuse. A failed
+build retains the last deployed site. Source timestamps and precipitation-period
+semantics remain attached to every frame. Global model runs expire after 24
+hours in the player; their static assets remain for 25 hours from model issue.
+Regional generation retention remains 24 hours from publication.
+
+The phone downloads only the native tiles needed for its current viewport and
+nearby animation frames. It composes those tiles with the finer regional PNG in
+a viewport-sized canvas, clearing the global rain beneath that region first.
+This avoids drawing rain twice, and preserves genuinely dry regional pixels.
+The client retains at most four completed viewport canvases and bounded image
+caches. Panning/zooming does not pause playback; playback can buffer while new
+area data loads, and a missing tile is shown as unavailable rather than dry.
+Motion fields are computed for the current view and invalidated when it changes.
+
+`tests/browser_global_forecast.py` uses explicit test-only global rain and a dry
+regional field to check regional replacement, New York/London/Sydney/Cape Town,
+longitude wrapping, pan playback, bounded caches and missing-tile recovery.
+`tests/test_global_forecast.py` checks projection against source grid positions,
+record integrity, tile reuse/rebuild, publication identity and source expiry.
+`tests/global_rain_test.js` checks client projection and viewport geometry.
+
+`android-client/world-radar-update.ps1` requests the updated page version after
+checking that the live site advertises full worldwide coverage. It also includes
+the earlier first-frame/lazy Navigation updates and release Internet permission,
+with the same backup, validation and safe-rerun behavior as the launch updater.

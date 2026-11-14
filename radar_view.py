@@ -54,8 +54,8 @@ button,input{font:inherit}button{cursor:pointer;-webkit-tap-highlight-color:tran
 <button id="info-toggle" class="round" aria-label="Map information and credits" aria-controls="source-panel" aria-expanded="false"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.1"/></svg></button>
 <section id="source-panel" hidden aria-labelledby="source-title"><button id="source-close" aria-label="Close map details">×</button><h2 id="source-title">Map information &amp; credits</h2><div id="availability" role="status">Checking weather data…</div>
 <p><a href="https://www.rainviewer.com/" target="_blank" rel="noopener">RainViewer</a> supplies recent observed radar. Coverage varies.</p>
-<p><a href="https://www.data.gouv.fr/datasets/paquets-arome-outre-mer-antilles-resolution-0-025deg" target="_blank" rel="noopener">Météo-France AROME Antilles</a> supplies the regional forecast on a 2.5 km grid. It shows mean rain rate over each preceding forecast hour. Source: Météo-France, Etalab Open Licence 2.0.</p><p><a href="https://www.ncei.noaa.gov/products/weather-climate-models/global-forecast" target="_blank" rel="noopener">NOAA GFS</a> supplies the final hours needed for a rolling 48-hour outlook and the fallback when regional data is unavailable. Its grid is approximately 28 km and shows instantaneous rain rate. Model changes use actual frames, without morphing one model into another. Motion interpolation adds no forecast resolution.</p>
-<p>Forecast coverage: eastern Caribbean, 10–23°N and 68–55°W. Forecast rain rates use mm/h. The timeline moves from observed radar into model forecasts; the label and legend identify each source.</p><p id="model-run"></p><p id="basemap-status">Loading map…</p><p>Map data: <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap contributors</a> · <a href="https://openmaptiles.org/" target="_blank" rel="noopener">© OpenMapTiles</a>. Map service: <a href="https://openfreemap.org/" target="_blank" rel="noopener">OpenFreeMap</a>. Terrain shading: Esri, USGS, NOAA.</p>
+<p><a href="https://www.data.gouv.fr/datasets/paquets-arome-outre-mer-antilles-resolution-0-025deg" target="_blank" rel="noopener">Météo-France AROME Antilles</a> supplies the regional forecast on a 2.5 km grid. It shows mean rain rate over each preceding forecast hour. Source: Météo-France, Etalab Open Licence 2.0.</p><p><a href="https://www.ncei.noaa.gov/products/weather-climate-models/global-forecast" target="_blank" rel="noopener">NOAA GFS</a> supplies worldwide rain in the published map, the final hours of the rolling 48-hour outlook, and the fallback outside the finer regional data. Its grid is approximately 28 km and shows instantaneous precipitation rate in water-equivalent mm/h; colder regions can include frozen precipitation. Model changes use actual frames, without morphing one model into another. Motion interpolation adds no forecast resolution.</p>
+<p id="coverage-details">Forecast coverage: eastern Caribbean, 10–23°N and 68–55°W. Forecast rain rates use mm/h. The timeline moves from observed radar into model forecasts; the label and legend identify each source.</p><p id="model-run"></p><p id="basemap-status">Loading map…</p><p>Map data: <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">© OpenStreetMap contributors</a> · <a href="https://openmaptiles.org/" target="_blank" rel="noopener">© OpenMapTiles</a>. Map service: <a href="https://openfreemap.org/" target="_blank" rel="noopener">OpenFreeMap</a>. Terrain shading: Esri, USGS, NOAA.</p>
 </section>
 <footer id="player" aria-label="Animation controls"><div class="player-row">
 <button id="play" aria-label="Play animation" disabled><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m7 4 14 8-14 8Z" fill="currentColor" stroke="none"/></svg></button><div class="time-block"><div id="clock">Loading radar</div><div id="detail">Observed rain</div></div>
@@ -130,8 +130,8 @@ let lastLegendKind='',lastDetail='',mapStatus='LOADING';
 function setMapStatus(value){mapStatus=value;map.getContainer().dataset.status=value;}
 const loaded=new Map(),pending=new Map();
 const provider=f=>f.provider||'noaa-gfs';
-const key=f=>f.kind+':'+provider(f)+':'+(f.model_run||'')+':'+f.time+':'+f.url;
-const sameForecastSource=(a,b)=>provider(a)===provider(b)&&a.model_run===b.model_run&&JSON.stringify(a.bounds)===JSON.stringify(b.bounds);
+const key=f=>f.kind+':'+provider(f)+':'+(f.model_run||'')+':'+f.time+':'+f.url+':'+(f.global_tiles?.url_template||'');
+const sameForecastSource=(a,b)=>provider(a)===provider(b)&&a.model_run===b.model_run&&a.global_tiles?.model_run===b.global_tiles?.model_run&&JSON.stringify(a.bounds)===JSON.stringify(b.bounds);
 const radarTileSize=window.devicePixelRatio>=2?512:256;
 // Only one full-resolution pair is uploaded to the GPU. Flow fields are kept
 // in a bounded worker cache; no extra forecast images are generated or fetched.
@@ -163,7 +163,7 @@ let motionStatus=rainMotionRenderer&&rainMotionRenderer.supported?'idle':'unsupp
 const motionFailures=new Map(),readableTiles=new Map();
 window.seapointMotionState=()=>({supported:!!(rainMotionRenderer&&rainMotionRenderer.supported),state:motionStatus,kind:motionWanted&&motionWanted.a.kind,pair:motionReadyKey,viewChanging:motionViewChanging,buffering:motionBuffered,prefetching:!!motionPrefetch,captureCacheSize:readableTiles.size,renderer:rainMotionRenderer&&rainMotionRenderer.stats});
 function hideRainMotion(){rainMotionOverlay._canvas.style.display='none';}
-function motionPairKey(a,b){return key(a)+'|'+key(b)+(a.kind==='observed'?'|view:'+motionViewRevision:'');}
+function motionPairKey(a,b){return key(a)+'|'+key(b)+(a.kind==='observed'||a.global_tiles?'|view:'+motionViewRevision:'');}
 function readableTile(image){
  const url=image.currentSrc||image.src;if(readableTiles.has(url))return readableTiles.get(url);
  const task=new Promise((resolve,reject)=>{const copy=new Image();copy.crossOrigin='anonymous';copy.decoding='async';const timer=setTimeout(()=>{copy.src='';reject(new Error('Radar pixels unavailable'));},6000);copy.onload=()=>{clearTimeout(timer);resolve(copy);};copy.onerror=()=>{clearTimeout(timer);reject(new Error('Radar pixels unavailable'));};copy.src=url;});
@@ -172,6 +172,10 @@ function readableTile(image){
 async function captureRainFrame(frame,layer){
  const canvas=document.createElement('canvas'),ctx=canvas.getContext('2d',{willReadFrequently:true});
  if(frame.kind==='forecast'){
+  if(frame.global_tiles){
+   const image=await layer.ensureView();canvas.width=image.width;canvas.height=image.height;ctx.drawImage(image,0,0);
+   return {pixels:ctx.getImageData(0,0,canvas.width,canvas.height),bounds:layer._bounds};
+  }
   const image=layer.getElement();if(!image||!image.naturalWidth)throw new Error('Forecast image unavailable');
   canvas.width=image.naturalWidth;canvas.height=image.naturalHeight;ctx.drawImage(image,0,0);
   return {pixels:ctx.getImageData(0,0,canvas.width,canvas.height),bounds:frame.bounds||forecastMeta.bounds};
@@ -203,7 +207,7 @@ function prefetchFollowingMotion(a,b){
  motionPrefetchedKeys.add(id);while(motionPrefetchedKeys.size>8)motionPrefetchedKeys.delete(motionPrefetchedKeys.values().next().value);
  const job={id,view:motionViewRevision};motionPrefetch=job;
  Promise.all([captureRainFrame(b,first),captureRainFrame(next,second)]).then(frames=>{
-  if(motionViewChanging||(b.kind==='observed'&&job.view!==motionViewRevision))return;
+  if(motionViewChanging||((b.kind==='observed'||b.global_tiles)&&job.view!==motionViewRevision))return;
   return rainMotionRenderer.prefetchPair(frames[0].pixels,frames[1].pixels,id);
  }).catch(()=>{}).finally(()=>{if(motionPrefetch===job)motionPrefetch=null;});
 }
@@ -247,8 +251,14 @@ window.seapointUseNativeInfo=()=>{$('info-toggle').hidden=true;};
 function notify(){window.seapointBootReady=true;if(window.SeaPointRadar)window.SeaPointRadar.postMessage('ready');}
 function announce(message){$('availability').textContent=message;}
 function observationEnd(){return radarFrames.length?radarFrames.at(-1).time:-Infinity;}
+function validGlobalFrame(frame,now){
+ const g=frame.global_tiles;if(!g)return true;
+ const hour=(frame.time-g.model_run)/3600;
+ const cycle=Number.isFinite(g.model_run)?new Date(g.model_run*1000).toISOString().slice(0,13).replace(/\D/g,''):'';
+ return Number.isInteger(g.model_run)&&g.model_run%21600===0&&now-g.model_run>=-60&&now-g.model_run<24*3600&&Number.isFinite(g.fetched_at)&&g.fetched_at>=g.model_run&&g.fetched_at<=now+60&&Number.isInteger(hour)&&hour>=1&&hour<=120&&g.max_zoom===4&&g.tile_size===256&&g.units==='mm/h'&&g.url_template==='data/world/'+cycle+'-'+String(hour).padStart(3,'0')+'-g1/{z}/{x}/{y}.png';
+}
 function validForecastFrame(frame,now=Date.now()/1000){
- return Number.isFinite(frame.model_run)&&now-frame.model_run>=-60&&now-frame.model_run<24*3600&&frame.time>=now-3600&&frame.time<=Math.ceil(now/3600)*3600+48*3600;
+ return Number.isFinite(frame.model_run)&&now-frame.model_run>=-60&&now-frame.model_run<24*3600&&frame.time>=now-3600&&frame.time<=Math.ceil(now/3600)*3600+48*3600&&validGlobalFrame(frame,now);
 }
 function forecastCoverageComplete(){
  if(!forecastMeta||forecastMeta.coverage_complete===false||!forecast.length||!predictionFrames.some(f=>f.time>Date.now()/1000))return false;
@@ -289,6 +299,12 @@ function setPlaying(value){
 }
 function frameLayer(frame){
  const id=key(frame);if(loaded.has(id))return Promise.resolve(loaded.get(id));if(pending.has(id))return pending.get(id);
+ if(frame.kind==='forecast'&&frame.global_tiles){
+  const layer=SeaPointGlobalRain.createLayer(frame,{isActive:()=>visibleLayers.has(layer)}).addTo(map);loaded.set(id,layer);
+  layer.on('load',()=>{if(motionWanted&&(motionWanted.first===layer||motionWanted.second===layer))motionFailures.delete(motionWanted.id);if(!motionViewChanging)render();});
+  layer.on('error',()=>{if(!motionViewChanging)render();});
+  return Promise.resolve(layer);
+ }
  const task=new Promise((resolve,reject)=>{
   let layer,successes=0,settled=false;
   const finish=ok=>{if(settled)return;settled=true;clearTimeout(timeout);if(ok){loaded.set(id,layer);resolve(layer);}else{if(layer)map.removeLayer(layer);reject(new Error('Map frame unavailable'));}};
@@ -341,6 +357,13 @@ function render(){
   setMapStatus('GAP');$('detail').textContent='Weather frame unavailable · retrying';lastDetail='';
   $('notice').textContent='No frame available at the selected time';$('notice').hidden=false;return true;
  }
+ const waitingViews=[first,second].filter(layer=>layer.isReadyForView&&!layer.isReadyForView());
+ if(waitingViews.length){
+  for(const layer of waitingViews)layer.ensureView().catch(()=>{});
+  motionBuffered=playing;$('notice').hidden=false;
+  $('notice').textContent=waitingViews.some(layer=>layer.viewFailed())?'Weather tiles unavailable. Retrying…':'Loading forecast for this map area…';
+  return false;
+ }
  // Original timestamps show the actual image. Verified patterns move;
  // weak matches grow/dissipate continuously rather than jumping at halfway.
  const canInterpolate=a!==b && gap>0 && gap<=(kind==='observed'?900:5400) && (kind!=='forecast'||sameForecastSource(a,b)) && blend>0 && blend<1;
@@ -367,7 +390,7 @@ function render(){
  const detail=kind==='forecast'?'Forecast rain · hourly model':waiting?'Radar · '+(forecastState==='preparing'?'Preparing 48-hour forecast…':'Reconnecting forecast…'):'Observed radar · '+format(shown.time);
  if(detail!==lastDetail){$('detail').textContent=detail;lastDetail=detail;}
  legend(kind);
- const outside=kind==='forecast'&&!L.latLngBounds(shown.bounds||forecastMeta.bounds).intersects(map.getBounds());
+ const outside=kind==='forecast'&&!shown.global_tiles&&!L.latLngBounds(shown.bounds||forecastMeta.bounds).intersects(map.getBounds());
  $('notice').hidden=!outside&&!motionBuffered;if(outside)$('notice').textContent='Outside the eastern Caribbean forecast coverage';else if(motionBuffered)$('notice').textContent='Preparing smooth rain playback…';
  return !motionBuffered;
 }
@@ -500,6 +523,8 @@ async function loadForecast(){
   const validBounds=b=>Array.isArray(b)&&b.length===2&&b.every(p=>Array.isArray(p)&&p.length===2&&p.every(Number.isFinite))&&b[0][0]<b[1][0]&&b[0][1]<b[1][1]&&b.every(p=>Math.abs(p[0])<=85&&Math.abs(p[1])<=180);
   const upcoming=data.frames.map(f=>({...f,kind:'forecast',provider:f.provider||'noaa-gfs',model_run:f.model_run??data.model_run,bounds:f.bounds||data.bounds,forecast_until:data.forecast_until})).filter(f=>Number.isFinite(f.time)&&f.url&&validBounds(f.bounds)&&['arome-antilles','noaa-gfs'].includes(f.provider)&&validForecastFrame(f,now));
   if(upcoming.length<2||!upcoming.some(frame=>frame.time>now)||(data.forecast_until!==undefined&&data.forecast_until<=now))throw new Error();
+  if(upcoming.some(frame=>frame.global_tiles))await optionalResource('/global-rain.js?v=1');
+  $('coverage-details').textContent=upcoming.some(frame=>frame.global_tiles)?'Forecast coverage: worldwide between 85°S and 85°N. NOAA GFS supplies global rain (~28 km model grid), with finer AROME Antilles data (~2.5 km) in its Caribbean footprint when available. Only the visible map area loads. Rain rates use mm/h. Observed radar coverage varies by location.':'Forecast coverage: eastern Caribbean, 10–23°N and 68–55°W. Rain rates use mm/h. Observed radar coverage varies by location.';
   forecastMetadataHealthy=true;forecastMeta=data;forecast=upcoming.sort((a,b)=>a.time-b.time);
   forecastState=forecastEverPublished?'updating':'preparing';
   // A ready manifest does not mean its images have arrived. The activation

@@ -101,7 +101,8 @@ def sample_rates(values, x, y):
                                  np.maximum.reduce(neighbors)))
 
 
-def render_grib(data, expected_time):
+def decode_gfs(data, expected_time):
+    """Validate and decode the original global GFS precipitation-rate grid."""
     import eccodes as ec
     handle = ec.codes_new_from_message(data)
     try:
@@ -117,23 +118,42 @@ def render_grib(data, expected_time):
         ni, nj = ec.codes_get(handle, 'Ni'), ec.codes_get(handle, 'Nj')
         if (ni, nj) != (1440, 721) or ec.codes_get(handle, 'jScansPositively') or ec.codes_get(handle, 'iScansNegatively'):
             raise ValueError('Unexpected GFS grid')
+        expected_grid = {'latitudeOfFirstGridPointInDegrees': 90,
+                         'longitudeOfFirstGridPointInDegrees': 0,
+                         'latitudeOfLastGridPointInDegrees': -90,
+                         'longitudeOfLastGridPointInDegrees': 359.75,
+                         'iDirectionIncrementInDegrees': .25,
+                         'jDirectionIncrementInDegrees': .25}
+        if (ec.codes_get(handle, 'gridType') != 'regular_ll' or
+                any(not math.isclose(ec.codes_get(handle, key), value, abs_tol=1e-8)
+                    for key, value in expected_grid.items()) or
+                ec.codes_get(handle, 'numberOfMissing')):
+            raise ValueError('GFS grid coverage or missing data changed')
         values = ec.codes_get_values(handle).reshape(nj, ni)
-        south, west = BOUNDS[0]
-        north, east = BOUNDS[1]
-        # Sample into Web Mercator so the image aligns with Leaflet's map.
-        width = height = 640
-        top = math.asinh(math.tan(math.radians(north)))
-        bottom = math.asinh(math.tan(math.radians(south)))
-        latitudes = np.degrees(np.arctan(np.sinh(np.linspace(top, bottom, height))))
-        longitudes = np.linspace(west % 360, east % 360, width)
-        y = (90 - latitudes) / 0.25
-        x = longitudes / 0.25
-        rates = sample_rates(values, x, y) * 3600
-        output = BytesIO()
-        Image.fromarray(rgba(rates)).save(output, format='PNG')
-        return output.getvalue()
+        if not np.isfinite(values).all():
+            raise ValueError('GFS precipitation contains missing data')
+        return values
     finally:
         ec.codes_release(handle)
+
+
+def render_grib(data, expected_time):
+    values = decode_gfs(data, expected_time)
+    south, west = BOUNDS[0]
+    north, east = BOUNDS[1]
+    # Sample into Web Mercator so the image aligns with Leaflet's map.
+    width = height = 640
+    top = math.asinh(math.tan(math.radians(north)))
+    bottom = math.asinh(math.tan(math.radians(south)))
+    latitudes = np.degrees(np.arctan(np.sinh(np.linspace(top, bottom, height))))
+    longitudes = np.linspace(west % 360, east % 360, width)
+    y = (90 - latitudes) / 0.25
+    x = longitudes / 0.25
+    rates = sample_rates(values, x, y) * 3600
+    output = BytesIO()
+    Image.fromarray(rgba(rates)).save(output, format='PNG')
+    return output.getvalue()
+
 
 
 class ForecastMaps:

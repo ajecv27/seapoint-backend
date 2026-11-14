@@ -129,12 +129,15 @@ class StaticPublicationTests(unittest.TestCase):
     def test_scheduled_build_waits_for_regional_refresh_before_publishing(self):
         with tempfile.TemporaryDirectory() as directory:
             output=Path(directory)
-            with patch('static_site.export.write_shell'), patch('forecast_service.RegionalForecastMaps') as factory, patch('static_site.export.time.sleep'), patch('static_site.export.publish_forecast') as publish:
+            with patch('static_site.export.write_shell'), patch('forecast_service.RegionalForecastMaps') as factory, patch('static_site.export.time.sleep'), patch('static_site.export.publish_forecast') as publish, patch('global_forecast.WorldTiles') as world:
                 factory.return_value.snapshot.side_effect=[
                     {'coverage_complete':True,'updating':True},
+                    {'coverage_complete':True,'updating':False,'source':'regional update'},
                     {'coverage_complete':True,'updating':False,'source':'regional update'}]
+                factory.return_value.gfs.snapshot.return_value={'status':'ready','coverage_complete':True}
+                world.return_value.prepare.return_value=[]
                 build(output,output/'cache')
-                self.assertEqual(factory.return_value.snapshot.call_count,2)
+                self.assertEqual(factory.return_value.snapshot.call_count,3)
                 self.assertEqual(publish.call_args.args[1]['source'],'regional update')
 
 
