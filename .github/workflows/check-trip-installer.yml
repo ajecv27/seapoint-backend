@@ -6,12 +6,16 @@ on:
       - '.github/workflows/check-trip-installer.yml'
       - 'android-client/trip-recovery-update.ps1'
       - 'android-client/trip-recovery/tests/**'
+      - 'android-client/export-routing-code.ps1'
+      - 'android-client/routing-export/**'
   push:
     branches: [main]
     paths:
       - '.github/workflows/check-trip-installer.yml'
       - 'android-client/trip-recovery-update.ps1'
       - 'android-client/trip-recovery/tests/**'
+      - 'android-client/export-routing-code.ps1'
+      - 'android-client/routing-export/**'
   workflow_dispatch:
 
 permissions:
@@ -35,6 +39,7 @@ jobs:
           if ($errors.Count -gt 0) { throw ($errors | Out-String) }
           & ./android-client/trip-recovery/tests/json-array-compatibility.ps1
           & ./android-client/trip-recovery/tests/installer-smoke.ps1
+          & ./android-client/routing-export/tests/collector-smoke.ps1
       - name: Check PowerShell 7
         shell: pwsh
         run: |
@@ -47,3 +52,4 @@ jobs:
           if ($errors.Count -gt 0) { throw ($errors | Out-String) }
           & ./android-client/trip-recovery/tests/json-array-compatibility.ps1
           & ./android-client/trip-recovery/tests/installer-smoke.ps1
+          & ./android-client/routing-export/tests/collector-smoke.ps1
