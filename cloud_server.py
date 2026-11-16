@@ -1296,7 +1296,7 @@ class Handler(
 ):
 
     def log_message(self, format, *args):
-        if urlparse(self.path).path in ('/route', '/tides'):
+        if urlparse(self.path).path in ('/route', '/tides', '/routing/guidance'):
             return
         super().log_message(format, *args)
 
@@ -1310,7 +1310,7 @@ class Handler(
 
         self.send_header(
             "Access-Control-Allow-Methods",
-            "GET, HEAD, OPTIONS",
+            "GET, HEAD, POST, OPTIONS",
         )
 
         self.send_header(
@@ -1431,6 +1431,25 @@ class Handler(
         self.send_cors_headers()
 
         self.end_headers()
+
+    def do_POST(self):
+        if urlparse(self.path).path != '/routing/guidance':
+            self.send_json({'error': 'Not found'}, 404)
+            return
+        # Bounded JSON; never log the live position or route payload.
+        try:
+            length = int(self.headers.get('Content-Length', '0'))
+            if not 0 < length <= 280000 or self.headers.get('Transfer-Encoding'):
+                raise ValueError('Invalid request length')
+            if self.headers.get_content_type() != 'application/json':
+                raise ValueError('JSON required')
+            self.connection.settimeout(10)
+            request = json.loads(self.rfile.read(length))
+            status, data = MARINE_ROUTES.guidance(request)
+            self.send_json(data, status)
+        except (ValueError, OSError):
+            self.close_connection = True
+            self.send_json({'status': 'error', 'error': 'Invalid guidance request'}, 400)
 
     def do_GET(self):
         parsed = urlparse(

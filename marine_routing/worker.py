@@ -13,6 +13,7 @@ def main():
     os.environ['SEAPOINT_ROUTE_TIMING'] = '0'
     try:
         from . import engine
+        from .guidance import guidance
         manifest = engine.initialize()
         send({'type': 'ready', 'dataset': manifest['id'],
               'build': engine.ROUTING_BUILD, 'coastline_policy': engine.COASTLINE_POLICY,
@@ -21,14 +22,19 @@ def main():
         print('Routing initialization failed: ' + type(error).__name__, file=sys.stderr, flush=True)
         send({'type': 'unavailable'})
         return
-    for line in sys.stdin:
-        if len(line) > 2048:
+    for line in iter(lambda: sys.stdin.readline(300001), ''):
+        if len(line) > 300000:
             return
         try:
             token = None
             request = json.loads(line)
             token = request['id']
-            result = engine.route(tuple(request['start']), tuple(request['finish']), seconds=18)
+            if request.get('op') == 'guidance':
+                result = guidance(tuple(request['position']),
+                    tuple(map(tuple, request['planned'])), request['active_leg'],
+                    request['accuracy_m'], tuple(map(tuple, request['previous'])))
+            else:
+                result = engine.route(tuple(request['start']), tuple(request['finish']), seconds=18)
             send({'id': token, 'status': 200, 'body': result,
                   'rss_kib': resource.getrusage(resource.RUSAGE_SELF).ru_maxrss})
         except engine.RouteTimeout:

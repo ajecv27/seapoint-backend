@@ -135,7 +135,7 @@ class RoutingRuntime:
                     'routing_build': self._build, 'coastline_dataset': DATASET,
                     'coastline_policy': COASTLINE_POLICY,
                     'initialization_error': self._initialization_error,
-                    'coverage': list(BOUNDS), 'region': 'caribbean', 'depth_checked': False}
+                    'guidance_version': 'live-coast-guidance-v1', 'coverage': list(BOUNDS), 'region': 'caribbean', 'depth_checked': False}
 
     @staticmethod
     def _point(point):
@@ -170,9 +170,35 @@ class RoutingRuntime:
                 raise ValueError('Choose two different locations')
         except ValueError as error:
             return self._error(str(error), 400)
-        key = (start, finish)
+        return self._execute({'start': start, 'finish': finish}, (start, finish))
+
+    def guidance(self, request):
+        try:
+            if not isinstance(request, dict) or set(request) - {'position', 'planned', 'active_leg', 'accuracy_m', 'previous'}:
+                raise ValueError('Invalid guidance request')
+            position = self._point(request['position'])
+            def path(value):
+                if not isinstance(value, list) or not 2 <= len(value) <= 4096:
+                    raise ValueError('Invalid guidance path')
+                return [self._point(p) for p in value]
+            planned = path(request['planned'])
+            previous = path(request['previous']) if request.get('previous') else []
+            leg = request['active_leg']
+            accuracy = request['accuracy_m']
+            if type(leg) is not int or not 0 <= leg < len(planned)-1:
+                raise ValueError('Invalid guidance progress')
+            if isinstance(accuracy, bool) or not isinstance(accuracy, (int, float)) or not math.isfinite(accuracy) or not 0 <= accuracy <= 50:
+                raise ValueError('Guidance needs an accurate GPS position')
+            if previous and previous[-1] != planned[-1]:
+                raise ValueError('Guidance destination changed')
+        except (ValueError, KeyError, TypeError) as error:
+            return self._error(str(error), 400)
+        return self._execute({'op': 'guidance', 'position': position, 'planned': planned,
+                              'previous': previous, 'active_leg': leg, 'accuracy_m': accuracy}, None)
+
+    def _execute(self, request, key):
         with self._lock:
-            cached = self._cache.get(key)
+            cached = self._cache.get(key) if key is not None else None
             if cached is not None and cached[0] > self.clock():
                 self._cache.move_to_end(key)
                 return 200, cached[1]
@@ -189,7 +215,7 @@ class RoutingRuntime:
                 return self._error('Routing is warming up. Please try again shortly.' if loading
                                    else 'Routing is temporarily unavailable. Please try again later.', retryable=loading)
             token = uuid.uuid4().hex
-            process.stdin.write(json.dumps({'id': token, 'start': start, 'finish': finish}, allow_nan=False) + '\n')
+            process.stdin.write(json.dumps(dict(request, id=token), allow_nan=False) + '\n')
             process.stdin.flush()
             deadline = self.clock() + self.route_timeout
             while self.clock() < deadline:
@@ -208,11 +234,12 @@ class RoutingRuntime:
                     if (body.get('status') != 'ok' or body.get('coastline_dataset') != DATASET or
                             body.get('coastline_policy') != COASTLINE_POLICY):
                         break
-                    with self._lock:
-                        self._cache[key] = (self.clock() + self.cache_seconds, body)
-                        self._cache.move_to_end(key)
-                        while len(self._cache) > 64:
-                            self._cache.popitem(last=False)
+                    if key is not None:
+                        with self._lock:
+                            self._cache[key] = (self.clock() + self.cache_seconds, body)
+                            self._cache.move_to_end(key)
+                            while len(self._cache) > 64:
+                                self._cache.popitem(last=False)
                 if status in (503, 504) or self._rss(process) > self.memory_bytes:
                     self._retire(process)
                 return status, body
