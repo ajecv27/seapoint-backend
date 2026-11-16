@@ -13,3 +13,11 @@ This remains a land-avoidance prototype: `depth_checked` is false. Coast checks 
 The updated Android client is required to use this endpoint. Existing clients keep their current behavior; `/route` remains compatible. Recorded track measurements are separate from live guidance.
 
 Tests cover bypassed legs, ambiguous parallel segments, forward-only progress, blocked connectors and rerouting, OSM-only land, certified origin corridors, arrival, HTTP request bounds, and privacy of access logs. An integration test uses the released coastline package and the real isolated worker protocol.
+
+## Android update
+
+Run `android-client/navigation-guidance-update.ps1` from the existing SeaPoint Flutter project directory. The updater applies the larger blue navigation needle, thinner recorded track, forward waypoint matching, live course and coast-checked guidance line. The idle location marker remains the blue circle.
+
+The script first checks the deployed live-guidance version, preflights all affected source contexts, and backs up the original files. It preserves unrelated edits and line endings, rolls back a failed write, and supports repeat installation. It contains targeted navigation changes and generic helpers. It does not include the complete app or recorded trips.
+
+Stop the running app, apply the updater, run `flutter analyze`, then run the release build on the connected Android phone. Existing saved trips and weather settings are retained. Native Windows PowerShell 5.1 and PowerShell 7 installation tests run in CI. The prepared Flutter changes passed analysis and 139 app tests; live movement and marker alignment still need the final phone check.

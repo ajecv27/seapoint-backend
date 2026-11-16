@@ -8,6 +8,8 @@ on:
       - 'tide_service.py'
       - 'android-client/tide-cache**'
       - 'android-client/tide-cache/**'
+      - 'android-client/navigation-guidance**'
+      - 'android-client/navigation-guidance/**'
       - 'requirements*.txt'
       - 'tests/test*py'
       - 'tests/routing_fixture_worker.py'
@@ -22,6 +24,8 @@ on:
       - 'tide_service.py'
       - 'android-client/tide-cache**'
       - 'android-client/tide-cache/**'
+      - 'android-client/navigation-guidance**'
+      - 'android-client/navigation-guidance/**'
       - 'requirements*.txt'
       - 'android-client/online-routing**'
       - 'android-client/online-routing/**'
@@ -58,8 +62,10 @@ jobs:
         run: |
           ./android-client/online-routing/installer-smoke.ps1
           ./android-client/tide-cache/installer-smoke.ps1
+          ./android-client/navigation-guidance/installer-smoke.ps1
       - name: PowerShell 7 installation
         shell: pwsh
         run: |
           ./android-client/online-routing/installer-smoke.ps1
           ./android-client/tide-cache/installer-smoke.ps1
+          ./android-client/navigation-guidance/installer-smoke.ps1
