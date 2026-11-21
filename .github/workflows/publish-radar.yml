@@ -8,6 +8,7 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/publish-radar.yml'
+      - '.github/actions/wait-pages-artifact/**'
       - 'static_site/**'
       - 'radar_view.py'
       - 'rain_motion.js'
@@ -43,6 +44,13 @@ jobs:
           python-version: '3.12'
           cache: pip
           cache-dependency-path: requirements-radar.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: .github/actions/wait-pages-artifact/package-lock.json
+      - name: Install the artifact readiness guard
+        run: npm ci --ignore-scripts --no-audit --no-fund --prefix .github/actions/wait-pages-artifact
       - name: Restore model downloads and retained image generations
         uses: actions/cache/restore@v4
         with:
@@ -58,6 +66,7 @@ jobs:
           python -m unittest discover -s tests -p 'test_static_site.py'
           python -m unittest discover -s tests -p 'test_global_forecast.py'
           node tests/global_rain_test.js
+          node --test .github/actions/wait-pages-artifact/wait.test.cjs
       - name: Prepare a complete buffered forecast
         run: python static_site/export.py --output _site --cache .radar-cache --timeout 960
       - name: Retain verified downloads for the next build
@@ -71,8 +80,18 @@ jobs:
       # GITHUB_TOKEN cannot enable the repository's Pages administration setting.
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
+        id: radar_upload
         with:
+          name: github-pages
           path: _site
+      - name: Wait for GitHub to recognize the radar upload
+        uses: ./.github/actions/wait-pages-artifact
+        with:
+          artifact-id: ${{ steps.radar_upload.outputs.artifact_id }}
+          artifact-name: github-pages
+          timeout-seconds: '120'
       - name: Deploy the complete site atomically
         id: deployment
         uses: actions/deploy-pages@v4
+        with:
+          artifact_name: github-pages

@@ -1,0 +1,12 @@
+{
+  "name": "seapoint-pages-artifact-readiness",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Wait for an uploaded radar artifact to become visible to the Pages deployment service",
+  "scripts": {
+    "test": "node --test wait.test.cjs"
+  },
+  "dependencies": {
+    "@actions/artifact": "6.3.1"
+  }
+}

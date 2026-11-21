@@ -1,0 +1,15 @@
+name: Wait for the uploaded Pages artifact
+description: Verify that the exact upload is visible through the artifact service before deployment.
+inputs:
+  artifact-id:
+    description: Artifact ID returned by actions/upload-pages-artifact.
+    required: true
+  artifact-name:
+    description: Name used by the Pages deployment action.
+    default: github-pages
+  timeout-seconds:
+    description: Maximum wait before retaining the previous published radar.
+    default: '120'
+runs:
+  using: node24
+  main: index.cjs

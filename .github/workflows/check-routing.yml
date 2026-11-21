@@ -16,6 +16,8 @@ on:
       - 'android-client/online-routing**'
       - 'android-client/online-routing/**'
       - '.github/workflows/check-routing.yml'
+      - '.github/workflows/publish-radar.yml'
+      - '.github/actions/wait-pages-artifact/**'
   push:
     branches: [main]
     paths:
@@ -30,6 +32,8 @@ on:
       - 'android-client/online-routing**'
       - 'android-client/online-routing/**'
       - '.github/workflows/check-routing.yml'
+      - '.github/workflows/publish-radar.yml'
+      - '.github/actions/wait-pages-artifact/**'
   workflow_dispatch:
 
 permissions:
@@ -69,3 +73,29 @@ jobs:
           ./android-client/online-routing/installer-smoke.ps1
           ./android-client/tide-cache/installer-smoke.ps1
           ./android-client/navigation-guidance/installer-smoke.ps1
+  radar-publication-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: .github/actions/wait-pages-artifact/package-lock.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund --prefix .github/actions/wait-pages-artifact
+      - run: node --test .github/actions/wait-pages-artifact/wait.test.cjs
+      - name: Create a non-weather artifact for the live readiness check
+        run: node -e "require('fs').writeFileSync('readiness-smoke.txt', 'SeaPoint artifact readiness check')"
+      - uses: actions/upload-artifact@v4
+        id: readiness_smoke
+        with:
+          name: radar-readiness-smoke
+          path: readiness-smoke.txt
+          retention-days: 1
+      - name: Verify the JavaScript action with the real GitHub artifact service
+        uses: ./.github/actions/wait-pages-artifact
+        with:
+          artifact-id: ${{ steps.readiness_smoke.outputs.artifact-id }}
+          artifact-name: radar-readiness-smoke
+          timeout-seconds: '120'
